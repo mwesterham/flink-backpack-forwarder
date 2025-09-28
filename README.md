@@ -1,0 +1,6 @@
+
+### Running
+
+```
+mvn clean package
+```
