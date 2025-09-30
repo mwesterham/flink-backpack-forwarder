@@ -64,6 +64,7 @@ CREATE TABLE listings (
     long_value TEXT,
     details TEXT,
     listed_at BIGINT,
+    market_name TEXT,
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now(),
     PRIMARY KEY (steamid, id)
@@ -104,6 +105,8 @@ flink cancel <job_id>
 docker exec -it flink-postgres psql -U testuser -d testdb
 
 SELECT * FROM listings;
+
+SELECT id,steamid,event,market_name,updated_at,created_at FROM listings WHERE id = '5021;6';
 ```
 
 - Stop the cluster

@@ -37,9 +37,9 @@ public class WebSocketForwarderJob {
                 .addSink(
                         JdbcSink.sink(
                                 new StringBuilder()
-                                        .append("INSERT INTO listings (")
-                                        .append("id, steamid, appid, metal, keys, raw_value, short_value, long_value, details, listed_at")
-                                        .append(") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ")
+                                        .append("INSERT INTO listings ")
+                                        .append("(id, steamid, appid, metal, keys, raw_value, short_value, long_value, details, listed_at, market_name, event) ")
+                                        .append("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ")
                                         .append("ON CONFLICT (steamid, id) DO UPDATE SET ")
                                         .append("event = EXCLUDED.event, ")
                                         .append("appid = EXCLUDED.appid, ")
@@ -50,6 +50,7 @@ public class WebSocketForwarderJob {
                                         .append("long_value = EXCLUDED.long_value, ")
                                         .append("details = EXCLUDED.details, ")
                                         .append("listed_at = EXCLUDED.listed_at, ")
+                                        .append("market_name = EXCLUDED.market_name, ")
                                         .append("updated_at = now()")
                                         .toString(),
                                 (statement, lu) -> {
@@ -91,6 +92,14 @@ public class WebSocketForwarderJob {
 
                                         // listed_at
                                         statement.setLong(10, lu.getPayload().getListedAt());
+
+                                        // market_name
+                                        String marketName = lu.getPayload().getItem().getMarketName();
+                                        if (marketName != null) statement.setString(11, marketName); else statement.setNull(11, java.sql.Types.VARCHAR);
+
+                                        // event
+                                        String event = lu.getEvent();
+                                        if (event != null) statement.setString(12, event); else statement.setNull(12, java.sql.Types.VARCHAR);
 
                                         log.info("Listing prepared for upsert: id={}, steamid={}", sku, lu.getPayload().getSteamid());
 
