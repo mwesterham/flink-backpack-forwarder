@@ -42,6 +42,34 @@ parallelism.default: 2
 
 ### Running locally via cluster
 
+- Setup the test sink
+
+```
+docker run --name flink-postgres -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpass -e POSTGRES_DB=testdb -p 5432:5432 -d postgres:16
+```
+
+```
+docker exec -it flink-postgres psql -U testuser -d testdb
+
+DROP TABLE IF EXISTS listings;
+CREATE TABLE listings (
+    id TEXT,
+    event TEXT,
+    steamid TEXT,
+    appid INT,
+    metal DOUBLE PRECISION,
+    keys INT,
+    raw_value DOUBLE PRECISION,
+    short_value TEXT,
+    long_value TEXT,
+    details TEXT,
+    listed_at BIGINT,
+    created_at TIMESTAMP DEFAULT now(),
+    updated_at TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (steamid, id)
+);
+```
+
 - Build the package
 
 ```
@@ -61,11 +89,21 @@ flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 
 - Observe the job
 
-Go to http://localhost:8081, or
+Go to http://localhost:8081 and to `Task Managers -> pick your task manager -> Logs`
+
+- View/cancel running jobs
 
 ```
 flink list
 flink cancel <job_id>
+```
+
+- Observe the sink
+
+```
+docker exec -it flink-postgres psql -U testuser -d testdb
+
+SELECT * FROM listings;
 ```
 
 - Stop the cluster

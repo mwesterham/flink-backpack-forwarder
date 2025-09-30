@@ -26,10 +26,20 @@ public class WebSocketSource implements SourceFunction<String> {
         LinkedBlockingQueue<String> messageQueue = new LinkedBlockingQueue<>();
 
         WebSocket.Listener listener = new WebSocket.Listener() {
+
+            private final StringBuilder buffer = new StringBuilder();
+
             @Override
             public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                messageQueue.offer(data.toString());
-                webSocket.request(1); // Request next message
+                buffer.append(data);
+
+                if (last) {
+                    String fullMessage = buffer.toString();
+                    messageQueue.offer(fullMessage); // emit full JSON
+                    buffer.setLength(0); // reset buffer
+                }
+
+                webSocket.request(1); // request next frame
                 return null;
             }
 
@@ -41,9 +51,10 @@ public class WebSocketSource implements SourceFunction<String> {
             @Override
             public void onOpen(WebSocket webSocket) {
                 log.info("Connected to WebSocket: {}", websocketUrl);
-                webSocket.request(1); // Start requesting messages
+                webSocket.request(1); // start requesting messages
             }
         };
+
 
         ws = client.newWebSocketBuilder()
                 .buildAsync(URI.create(websocketUrl), listener)
