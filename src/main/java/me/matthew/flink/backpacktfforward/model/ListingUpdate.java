@@ -29,8 +29,8 @@ public class ListingUpdate {
         public int appid;
         public Currencies currencies;
         public Value value;
-        public boolean tradeOffersPreferred;
-        public boolean buyoutOnly;
+        public Boolean tradeOffersPreferred;
+        public Boolean buyoutOnly;
         public String details;
         public long listedAt;
         public long bumpedAt;
@@ -97,8 +97,8 @@ public class ListingUpdate {
         public List<String> clazz;
         public String slot;
         public Particle particle;
-        public boolean tradable;
-        public boolean craftable;
+        public Boolean tradable;
+        public Boolean craftable;
         public String priceindex;
     }
 
@@ -135,9 +135,9 @@ public class ListingUpdate {
         public String name;
         public String avatar;
         public String avatarFull;
-        public boolean premium;
-        public boolean online;
-        public boolean banned;
+        public Boolean premium;
+        public Boolean online;
+        public Boolean banned;
         public String customNameStyle;
         public String clazz; // `class` renamed to clazz
         public String style;

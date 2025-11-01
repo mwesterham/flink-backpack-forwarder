@@ -53,9 +53,11 @@ docker exec -it flink-postgres psql -U testuser -d testdb
 
 DROP TABLE IF EXISTS listings;
 CREATE TABLE listings (
-    id TEXT,
-    event TEXT,
-    steamid TEXT,
+    id TEXT PRIMARY KEY,
+    steamid TEXT NOT NULL,
+    item_defindex INT NOT NULL,
+    item_quality_id INT NOT NULL,
+    intent TEXT NOT NULL,
     appid INT,
     metal DOUBLE PRECISION,
     keys INT,
@@ -63,11 +65,24 @@ CREATE TABLE listings (
     short_value TEXT,
     long_value TEXT,
     details TEXT,
-    listed_at BIGINT,
+    listed_at TIMESTAMP,
     market_name TEXT,
+    status TEXT,
+    user_agent_client TEXT,
+    user_name TEXT,
+    user_premium BOOLEAN,
+    user_online BOOLEAN,
+    user_banned BOOLEAN,
+    user_trade_offer_url TEXT,
+    item_tradable BOOLEAN,
+    item_craftable BOOLEAN,
+    item_quality_color TEXT,
+    item_particle_name TEXT,
+    item_particle_type TEXT,
+    bumped_at TIMESTAMP,
+    is_deleted BOOLEAN DEFAULT false,
     created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
-    PRIMARY KEY (steamid, id)
+    updated_at TIMESTAMP DEFAULT now()
 );
 ```
 
@@ -106,7 +121,7 @@ docker exec -it flink-postgres psql -U testuser -d testdb
 
 SELECT * FROM listings;
 
-SELECT id,steamid,event,market_name,updated_at,created_at FROM listings WHERE id = '5021;6';
+SELECT * FROM listings WHERE item_defindex = '5021' AND item_quality_id = '6';
 ```
 
 - Stop the cluster
