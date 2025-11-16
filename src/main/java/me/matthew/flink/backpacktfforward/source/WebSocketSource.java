@@ -1,4 +1,4 @@
-package me.matthew.flink.backpacktfforward;
+package me.matthew.flink.backpacktfforward.source;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;

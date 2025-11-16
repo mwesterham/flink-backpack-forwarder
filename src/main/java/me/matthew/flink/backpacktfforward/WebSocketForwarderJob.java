@@ -4,7 +4,9 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
-import me.matthew.flink.backpacktfforward.sink.ListingJdbcSinkFactory;
+import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
+import me.matthew.flink.backpacktfforward.sink.ListingUpsertSink;
+import me.matthew.flink.backpacktfforward.source.WebSocketSource;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
@@ -33,11 +35,14 @@ public class WebSocketForwarderJob {
         }).returns(ListingUpdate.class);
 
         // Branch by event type
+        final String dbUrl = "jdbc:postgresql://localhost:5432/testdb";
+        final String dbUName = "testuser";
+        final String dbPass = "testpass";
         parsed.filter(lu -> "listing-update".equals(lu.getEvent()))
-                .addSink(ListingJdbcSinkFactory.upsertSink());
+                .addSink(new ListingUpsertSink(dbUrl, dbUName, dbPass));
 
         parsed.filter(lu -> "listing-delete".equals(lu.getEvent()))
-                .addSink(ListingJdbcSinkFactory.deleteSink());
+                .addSink(new ListingDeleteSink(dbUrl, dbUName, dbPass));
 
         env.execute("BackpackTF WebSocket Forwarder");
     }

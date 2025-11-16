@@ -103,6 +103,10 @@ start-cluster.sh
 flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
+```
+mvn clean package && flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+```
+
 - Observe the job
 
 Go to http://localhost:8081 and to `Task Managers -> pick your task manager -> Logs`
@@ -121,13 +125,31 @@ docker exec -it flink-postgres psql -U testuser -d testdb
 
 SELECT * FROM listings;
 
-SELECT * FROM listings WHERE item_defindex = '5021' AND item_quality_id = '6';
+SELECT * FROM listings WHERE item_defindex = '5021' AND item_quality_id = '6' AND intent = 'sell' AND is_deleted = false ORDER BY raw_value;
+
+SELECT * FROM listings WHERE id = '440_16358814163';
 ```
 
 - Stop the cluster
 
 ```
 stop-cluster.sh
+```
+
+### Adjustting task manager ram / prometheus ports / etc...
+
+```
+code /home/mwesterham/flink-1.20.2/conf/config.yaml
+```
+
+### Checking metrics
+
+```
+curl http://localhost:9249/metrics
+```
+
+```
+curl http://localhost:9250/metrics | grep listing_upsert
 ```
 
 ### Debugging
