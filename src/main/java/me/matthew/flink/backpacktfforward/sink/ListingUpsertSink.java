@@ -57,18 +57,20 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     private transient Counter upsertCounter;
 
     private final List<ListingUpdate> batch = new ArrayList<>();
-    private final int batchSize = 10;
-    private final long batchIntervalMs = 200;
+    private final int batchSize;
+    private final long batchIntervalMs;
     private long lastFlushTime;
 
     private final String jdbcUrl;
     private final String username;
     private final String password;
 
-    public ListingUpsertSink(String jdbcUrl, String username, String password) {
+    public ListingUpsertSink(String jdbcUrl, String username, String password, int batchSize, long batchIntervalMs) {
         this.jdbcUrl = jdbcUrl;
         this.username = username;
         this.password = password;
+        this.batchSize = batchSize;
+        this.batchIntervalMs = batchIntervalMs;
     }
 
     @Override

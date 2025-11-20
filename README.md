@@ -34,10 +34,19 @@ metrics:
 
 ### Building the docker file
 
+- One-liner
+
 ```
-mkdir -p libs
-curl -L -o libs/flink-metrics-prometheus-1.20.2.jar \
-  https://repo1.maven.org/maven2/org/apache/flink/flink-metrics-prometheus/1.20.2/flink-metrics-prometheus-1.20.2.jar
+mvn clean package && \
+docker build -t tf2-ingest-flink-job:1.0 . && \
+docker tag tf2-ingest-flink-job:1.0 mwesterham/tf2-ingest-flink-job:latest && \
+docker push mwesterham/tf2-ingest-flink-job:latest
+```
+
+- Separate
+
+```
+mvn clean package
 ```
 
 ```

@@ -27,6 +27,15 @@ public class WebSocketForwarderJob {
         String dbUrl = System.getenv("DB_URL");
         String dbUser = System.getenv("DB_USERNAME");
         String dbPass = System.getenv("DB_PASSWORD");
+        int upsertBatchSize = Integer.parseInt(System.getenv().getOrDefault("UPSERT_BATCH_SIZE", "10"));
+        long upsertBatchIntervalMs = Long.parseLong(System.getenv().getOrDefault("UPSERT_BATCH_INTERVAL_MS", "200"));
+        int deleteBatchSize = Integer.parseInt(System.getenv().getOrDefault("DELETE_BATCH_SIZE", "10"));
+        long deleteBatchIntervalMs = Long.parseLong(System.getenv().getOrDefault("DELETE_BATCH_INTERVAL_MS", "1000"));
+
+        log.info("Upsert batch size: {}", upsertBatchSize);
+        log.info("Upsert batch interval (ms): {}", upsertBatchIntervalMs);
+        log.info("Delete batch size: {}", deleteBatchSize);
+        log.info("Delete batch interval (ms): {}", deleteBatchIntervalMs);
 
         if (sourceUrl == null) throw new IllegalArgumentException("SOURCE_URL is not set");
         if (dbUrl == null || dbUser == null || dbPass == null)
@@ -52,10 +61,10 @@ public class WebSocketForwarderJob {
 
         // Route events
         parsed.filter(lu -> "listing-update".equals(lu.getEvent()))
-                .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass));
+                .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass, upsertBatchSize, upsertBatchIntervalMs));
 
         parsed.filter(lu -> "listing-delete".equals(lu.getEvent()))
-                .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass));
+                .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs));
 
         env.execute("BackpackTF WebSocket Forwarder");
     }

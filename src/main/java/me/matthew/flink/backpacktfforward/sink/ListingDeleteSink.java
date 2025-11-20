@@ -28,15 +28,17 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
         """;
 
     // Flush controls
-    private final int batchSize = 10;
-    private final long flushIntervalMs = 1000L; // 1 second
+    private final int batchSize;
+    private final long batchIntervalMs;
     private int currentBatchCount = 0;
     private long lastFlushTime = 0;
 
-    public ListingDeleteSink(String jdbcUrl, String username, String password) {
+    public ListingDeleteSink(String jdbcUrl, String username, String password, int batchSize, long batchIntervalMs) {
         this.jdbcUrl = jdbcUrl;
         this.username = username;
         this.password = password;
+        this.batchSize = batchSize;
+        this.batchIntervalMs = batchIntervalMs;
     }
 
     @Override
@@ -69,7 +71,7 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
         deleteCounter.inc();
 
         long now = System.currentTimeMillis();
-        if (currentBatchCount >= batchSize || (now - lastFlushTime) >= flushIntervalMs) {
+        if (currentBatchCount >= batchSize || (now - lastFlushTime) >= batchIntervalMs) {
             log.info("Preparing to commit batch soft deletes currentBatchCount={} lastFlushTime={}", currentBatchCount, lastFlushTime);
             markDeletedStmt.executeBatch();
             connection.commit();
