@@ -20,29 +20,42 @@ public class WebSocketForwarderJob {
         log.info("Starting BackpackTF WebSocketForwarderJob...");
 
         ObjectMapper mapper = new ObjectMapper();
-        String sourceUrl = "ws://laputa.local:30331/forwarded";
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        DataStreamSource<String> source = env.addSource(new WebSocketSource(sourceUrl));
+        // Read env vars safely
+        String sourceUrl = System.getenv("SOURCE_URL");
+        String dbUrl = System.getenv("DB_URL");
+        String dbUser = System.getenv("DB_USERNAME");
+        String dbPass = System.getenv("DB_PASSWORD");
 
-        var parsed = source.flatMap((String event, Collector<ListingUpdate> out) -> {
-            try {
-                List<ListingUpdate> updates = mapper.readValue(event, new TypeReference<>() {});
-                for (ListingUpdate update : updates) out.collect(update);
-            } catch (Exception e) {
-                log.error("Failed to parse WebSocket payload", e);
-            }
-        }).returns(ListingUpdate.class);
+        if (sourceUrl == null) throw new IllegalArgumentException("SOURCE_URL is not set");
+        if (dbUrl == null || dbUser == null || dbPass == null)
+            throw new IllegalArgumentException("Database env vars missing");
 
-        // Branch by event type
-        final String dbUrl = "jdbc:postgresql://localhost:5432/testdb";
-        final String dbUName = "testuser";
-        final String dbPass = "testpass";
+        // Always single-threaded WebSocket
+        DataStreamSource<String> source =
+                env.addSource(new WebSocketSource(sourceUrl))
+                        .setParallelism(1);
+
+        var parsed = source
+                .flatMap((String event, Collector<ListingUpdate> out) -> {
+                    try {
+                        List<ListingUpdate> updates =
+                                mapper.readValue(event, new TypeReference<List<ListingUpdate>>() {
+                                });
+                        updates.forEach(out::collect);
+                    } catch (Exception e) {
+                        log.error("Failed to parse WebSocket payload: {}", event, e);
+                    }
+                })
+                .returns(ListingUpdate.class);
+
+        // Route events
         parsed.filter(lu -> "listing-update".equals(lu.getEvent()))
-                .addSink(new ListingUpsertSink(dbUrl, dbUName, dbPass));
+                .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass));
 
         parsed.filter(lu -> "listing-delete".equals(lu.getEvent()))
-                .addSink(new ListingDeleteSink(dbUrl, dbUName, dbPass));
+                .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass));
 
         env.execute("BackpackTF WebSocket Forwarder");
     }

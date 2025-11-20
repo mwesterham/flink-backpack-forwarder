@@ -40,6 +40,20 @@ parallelism.default: 2
 
 ```
 
+### Building the docker file
+
+```
+docker build -t tf2-ingest-flink-job:1.0 .
+```
+
+```
+docker tag tf2-ingest-flink-job:1.0 mwesterham/tf2-ingest-flink-job:latest
+```
+
+```
+docker push mwesterham/tf2-ingest-flink-job:latest
+```
+
 ### Running locally via cluster
 
 - Setup the test sink
@@ -98,13 +112,13 @@ start-cluster.sh
 ```
 
 - Startup the job
-
 ```
+mvn clean package && \
+SOURCE_URL="ws://laputa.local:30331/forwarded" \
+DB_URL="jdbc:postgresql://localhost:5432/testdb" \
+DB_USERNAME="testuser" \
+DB_PASSWORD="testpass" \
 flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
-```
-
-```
-mvn clean package && flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
 - Observe the job
