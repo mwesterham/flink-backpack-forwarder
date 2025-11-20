@@ -18,29 +18,27 @@ flink -v
 ```
 
 - Setup windows cluster
-Put this in `$FLINK_HOME/conf/flink-conf.yaml`
+Put this in `$FLINK_HOME/conf/config.yaml`
 ```
-vi $FLINK_HOME/conf/flink-conf.yaml
+vi $FLINK_HOME/conf/config.yaml
 ```
 ```
-# REST
-rest.port: 8081
-rest.address: localhost
-rest.bind-address: 0.0.0.0
-
-# JobManager memory
-jobmanager.memory.process.size: 1024m
-
-# TaskManager memory
-taskmanager.memory.process.size: 1024m
-taskmanager.numberOfTaskSlots: 2
-
-# Default parallelism
-parallelism.default: 2
-
+metrics:
+  reporters: prom
+  reporter:
+    prom:
+      factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+      port: 9249-9259
+      filter.includes: "*"  # or "taskmanager.*" for TaskManager only
 ```
 
 ### Building the docker file
+
+```
+mkdir -p libs
+curl -L -o libs/flink-metrics-prometheus-1.20.2.jar \
+  https://repo1.maven.org/maven2/org/apache/flink/flink-metrics-prometheus/1.20.2/flink-metrics-prometheus-1.20.2.jar
+```
 
 ```
 docker build -t tf2-ingest-flink-job:1.0 .
