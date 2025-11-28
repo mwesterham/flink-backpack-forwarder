@@ -57,12 +57,12 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
     public void invoke(ListingUpdate value, Context context) throws Exception {
         var payload = value.getPayload();
 
-        log.info("Preparing to soft delete listing: id={} steamid={}, defindex={}, quality={}, intent={}",
-                payload.getId(),
-                payload.getSteamid(),
-                payload.getItem().getDefindex(),
-                payload.getItem().getQuality().getId(),
-                payload.getIntent());
+//        log.info("Preparing to soft delete listing: id={} steamid={}, defindex={}, quality={}, intent={}",
+//                payload.getId(),
+//                payload.getSteamid(),
+//                payload.getItem().getDefindex(),
+//                payload.getItem().getQuality().getId(),
+//                payload.getIntent());
 
         markDeletedStmt.setString(1, payload.getId());
         markDeletedStmt.addBatch();
@@ -72,7 +72,7 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
 
         long now = System.currentTimeMillis();
         if (currentBatchCount >= batchSize || (now - lastFlushTime) >= batchIntervalMs) {
-            log.info("Preparing to commit batch soft deletes currentBatchCount={} lastFlushTime={}", currentBatchCount, lastFlushTime);
+//            log.info("Preparing to commit batch soft deletes currentBatchCount={} lastFlushTime={}", currentBatchCount, lastFlushTime);
             markDeletedStmt.executeBatch();
             connection.commit();
             currentBatchCount = 0;

@@ -96,17 +96,17 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
         var payload = lu.getPayload();
 
 
-        log.info("Preparing to upsert listing: id={} steamid={}, defindex={}, quality={}, intent={}",
-                payload.getId(),
-                payload.getSteamid(),
-                payload.getItem().getDefindex(),
-                payload.getItem().getQuality().getId(),
-                payload.getIntent());
+//        log.info("Preparing to upsert listing: id={} steamid={}, defindex={}, quality={}, intent={}",
+//                payload.getId(),
+//                payload.getSteamid(),
+//                payload.getItem().getDefindex(),
+//                payload.getItem().getQuality().getId(),
+//                payload.getIntent());
 
         long now = System.currentTimeMillis();
 
         if (batch.size() >= batchSize || now - lastFlushTime >= batchIntervalMs) {
-            log.info("Preparing to commit batch upserts currentBatchCount={} lastFlushTime={}", batch.size(), lastFlushTime);
+//            log.info("Preparing to commit batch upserts currentBatchCount={} lastFlushTime={}", batch.size(), lastFlushTime);
             flushBatch();
             lastFlushTime = now;
         }
