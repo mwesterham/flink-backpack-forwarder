@@ -9,9 +9,12 @@ import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.nio.ByteBuffer;
 import java.time.Duration;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.Objects;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 public class WebSocketSource extends RichSourceFunction<String> {
@@ -19,26 +22,52 @@ public class WebSocketSource extends RichSourceFunction<String> {
     private final String websocketUrl;
     private volatile boolean running = true;
 
-    private transient WebSocket ws;
+    // Configurable parameters (tweak when constructing)
+    private final int queueCapacity;
+    private final Duration heartbeatInterval;
+    private final long initialBackoffMs;
+    private final long maxBackoffMs;
+    private final Duration connectTimeout;
+
+    // Transient runtime objects
     private transient HttpClient client;
+    private transient AtomicReference<WebSocket> wsRef;
+    private transient ScheduledExecutorService heartbeatScheduler;
+    private transient ExecutorService connectExecutor;
+
+    // Queue used to buffer messages between WebSocket threads and the Flink source thread
+    private transient BlockingQueue<String> messageQueue;
 
     // Metrics
     private transient Counter messagesReceived;
+    private transient Counter messagesDropped;
     private transient Counter connectionsOpened;
     private transient Counter connectionsClosed;
     private transient Counter connectFailures;
     private transient Counter reconnectAttempts;
     private transient Counter heartbeatFailures;
+    private transient AtomicLong lastBackoffMs;
 
-    private volatile long lastBackoffMs = 0;
-
-    // Reconnect config
-    private final long initialBackoffMs = 1000;   // 1s
-    private final long maxBackoffMs = 30000;      // 30s
-    private final Duration heartbeatInterval = Duration.ofSeconds(20);
+    // internal control to signal connection closed (used for reconnect detection)
+    private transient CompletableFuture<Void> closeSignal;
 
     public WebSocketSource(String websocketUrl) {
-        this.websocketUrl = websocketUrl;
+        // defaults
+        this(websocketUrl, 5_000, Duration.ofSeconds(20), 1_000L, 30_000L, Duration.ofSeconds(10));
+    }
+
+    public WebSocketSource(String websocketUrl,
+                           int queueCapacity,
+                           Duration heartbeatInterval,
+                           long initialBackoffMs,
+                           long maxBackoffMs,
+                           Duration connectTimeout) {
+        this.websocketUrl = Objects.requireNonNull(websocketUrl);
+        this.queueCapacity = queueCapacity;
+        this.heartbeatInterval = heartbeatInterval;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
+        this.connectTimeout = connectTimeout;
     }
 
     @Override
@@ -46,150 +75,242 @@ public class WebSocketSource extends RichSourceFunction<String> {
         var metrics = getRuntimeContext().getMetricGroup();
 
         messagesReceived = metrics.counter("websocket_source_messages_received");
+        messagesDropped = metrics.counter("websocket_source_messages_dropped");
         connectionsOpened = metrics.counter("websocket_source_connections_opened");
         connectionsClosed = metrics.counter("websocket_source_connections_closed");
         connectFailures = metrics.counter("websocket_source_connection_failures");
         reconnectAttempts = metrics.counter("websocket_source_reconnect_attempts");
         heartbeatFailures = metrics.counter("websocket_source_heartbeat_failures");
 
-        metrics.gauge("last_reconnect_backoff_ms", (Gauge<Long>) () -> lastBackoffMs);
-        // queue size gauge will be registered inside run() once queue is created
+        lastBackoffMs = new AtomicLong(0L);
+        metrics.gauge("last_reconnect_backoff_ms", (Gauge<Long>) lastBackoffMs::get);
+        // queue gauge will be registered in run() after queue is created
+
+        wsRef = new AtomicReference<>();
     }
 
     @Override
     public void run(SourceContext<String> ctx) throws Exception {
-        client = HttpClient.newHttpClient();
-        LinkedBlockingQueue<String> messageQueue = new LinkedBlockingQueue<>();
+        client = HttpClient.newBuilder()
+                .connectTimeout(connectTimeout)
+                .build();
 
-        // Register gauge after queue creation
-        getRuntimeContext()
-                .getMetricGroup()
-                .gauge("queue_size", (Gauge<Integer>) messageQueue::size);
+        // Bounded queue prevents unbounded memory growth and makes the source drop on overload
+        messageQueue = new ArrayBlockingQueue<>(queueCapacity);
+
+        // Register gauge for queue size
+        getRuntimeContext().getMetricGroup().gauge("queue_size", (Gauge<Integer>) messageQueue::size);
+
+        // single-thread ScheduledExecutor for heartbeat (clean lifecycle)
+        heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "ws-heartbeat-scheduler");
+            t.setDaemon(true);
+            return t;
+        });
+
+        // single thread for connecting/joining web socket futures (prevents blocking Flink thread on .join)
+        connectExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "ws-connect-thread");
+            t.setDaemon(true);
+            return t;
+        });
 
         long backoff = initialBackoffMs;
 
-        while (running) {
-            try {
-                connect(messageQueue);
-                backoff = initialBackoffMs; // reset after success
+        try {
+            while (running) {
+                try {
+                    // Attempt to connect (blocks until connected or throws)
+                    connect();
+                    backoff = initialBackoffMs; // reset on success
 
-                // Emit messages until connection fails
-                while (running && ws != null) {
-                    String msg = messageQueue.take();
-                    messagesReceived.inc();
-                    ctx.collect(msg);
+                    // Emit until connection is lost or cancel() called
+                    while (running && wsRef.get() != null) {
+                        // Poll with timeout so we can check running/wsRef periodically
+                        String msg = messageQueue.poll(1, TimeUnit.SECONDS);
+                        if (msg != null) {
+                            // Emit under checkpoint lock per Flink requirements
+                            synchronized (ctx.getCheckpointLock()) {
+                                ctx.collect(msg);
+                            }
+                            messagesReceived.inc();
+                        }
+                    }
+                } catch (Exception connectEx) {
+                    connectFailures.inc();
+                    log.error("WebSocket connection failed: {}", connectEx.getMessage(), connectEx);
                 }
 
-            } catch (Exception ex) {
-                connectFailures.inc();
-                log.error("WebSocket connection failed: {}", ex.getMessage());
+                if (!running) break;
+
+                // reconnect backoff
+                reconnectAttempts.inc();
+                lastBackoffMs.set(backoff);
+                log.warn("WebSocket disconnected — reconnecting in {} ms...", backoff);
+                Thread.sleep(backoff);
+                backoff = Math.min(backoff * 2, maxBackoffMs);
             }
-
-            if (!running) break;
-
-            // Reconnect
-            reconnectAttempts.inc();
-            lastBackoffMs = backoff;
-
-            log.warn("Reconnecting in {} ms...", backoff);
-            Thread.sleep(backoff);
-
-            backoff = Math.min(backoff * 2, maxBackoffMs); // exponential backoff
+        } finally {
+            // clean shutdown
+            shutdownHeartbeat();
+            closeWebSocket();
+            shutdownExecutors();
         }
-
-        closeWs();
     }
 
-    /** Create the WebSocket and listener */
-    private void connect(LinkedBlockingQueue<String> queue) {
+    /**
+     * Create/establish the WebSocket and set up listener.
+     * Blocks until a WebSocket is established or throws exception.
+     */
+    private void connect() throws Exception {
         log.info("Connecting to WebSocket {}", websocketUrl);
 
+        // reset signal for this connection
+        closeSignal = new CompletableFuture<>();
+
         try {
-            ws = client.newWebSocketBuilder()
-                    .buildAsync(URI.create(websocketUrl), new Listener(queue))
-                    .join();
+            // build async and wait on a separate thread to avoid blocking the Flink main thread on join()
+            CompletableFuture<WebSocket> wsFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return client.newWebSocketBuilder()
+                            .buildAsync(URI.create(websocketUrl), new WsListener(messageQueue));
+                } catch (Exception e) {
+                    throw new CompletionException(e);
+                }
+            }, connectExecutor).thenCompose(f -> f);
+
+            WebSocket ws = wsFuture.get(30, TimeUnit.SECONDS); // wait for open
+            wsRef.set(ws);
+
+            // start heartbeat task (will be canceled in shutdownHeartbeat)
+            heartbeatScheduler.scheduleAtFixedRate(() -> {
+                WebSocket w = wsRef.get();
+                if (w == null) return;
+                try {
+                    // send ping (empty payload)
+                    w.sendPing(ByteBuffer.allocate(0));
+                } catch (Throwable t) {
+                    heartbeatFailures.inc();
+                    log.warn("Heartbeat ping failed: {}", t.getMessage());
+                }
+            }, heartbeatInterval.toMillis(), heartbeatInterval.toMillis(), TimeUnit.MILLISECONDS);
+
+            log.info("WebSocket connected: {}", websocketUrl);
+            connectionsOpened.inc();
         } catch (Exception e) {
             connectFailures.inc();
+            log.error("Failed to establish WebSocket connection: {}", e.getMessage());
             throw e;
         }
-
-        // Heartbeat thread
-        Thread heartbeat = new Thread(() -> {
-            while (running && ws != null) {
-                try {
-                    Thread.sleep(heartbeatInterval.toMillis());
-                    ws.sendPing(java.nio.ByteBuffer.wrap(new byte[]{}));
-                } catch (Exception ex) {
-                    heartbeatFailures.inc();
-                }
-            }
-        }, "ws-heartbeat");
-
-        heartbeat.setDaemon(true);
-        heartbeat.start();
     }
 
-    private void closeWs() {
+    private void closeWebSocket() {
         try {
-            if (ws != null) {
-                ws.sendClose(WebSocket.NORMAL_CLOSURE, "Job stopped").join();
+            WebSocket w = wsRef.getAndSet(null);
+            if (w != null) {
+                try {
+                    w.sendClose(WebSocket.NORMAL_CLOSURE, "Shutting down").join();
+                } catch (Exception ignored) {}
                 connectionsClosed.inc();
                 log.info("WebSocket closed normally.");
             }
-        } catch (Exception ignored) {}
+            if (closeSignal != null && !closeSignal.isDone()) {
+                closeSignal.complete(null);
+            }
+        } catch (Exception ex) {
+            log.warn("Exception while closing WebSocket: {}", ex.getMessage(), ex);
+        }
+    }
+
+    private void shutdownHeartbeat() {
+        if (heartbeatScheduler != null) {
+            try {
+                heartbeatScheduler.shutdownNow();
+                heartbeatScheduler.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            } finally {
+                heartbeatScheduler = null;
+            }
+        }
+    }
+
+    private void shutdownExecutors() {
+        if (connectExecutor != null) {
+            try {
+                connectExecutor.shutdownNow();
+            } catch (Exception ignored) {}
+            connectExecutor = null;
+        }
     }
 
     @Override
     public void cancel() {
         running = false;
-        closeWs();
+        // make sure to close the websocket and stop heartbeat
+        closeWebSocket();
+        shutdownHeartbeat();
+        shutdownExecutors();
+        // clear queue to free memory
+        if (messageQueue != null) {
+            messageQueue.clear();
+        }
     }
 
     // -----------------------------
     // WebSocket Listener
     // -----------------------------
-    private class Listener implements WebSocket.Listener {
+    private class WsListener implements WebSocket.Listener {
+        private final BlockingQueue<String> queue;
+        // Use per-message buffer; create new buffer after each completed message to let
+        // the old backing char[] be GC eligible.
+        private StringBuilder buffer = new StringBuilder();
 
-        private final LinkedBlockingQueue<String> queue;
-        private final StringBuilder buffer = new StringBuilder();
-
-        Listener(LinkedBlockingQueue<String> queue) {
+        WsListener(BlockingQueue<String> queue) {
             this.queue = queue;
         }
 
         @Override
         public void onOpen(WebSocket webSocket) {
-            connectionsOpened.inc();
-            log.info("WebSocket connected: {}", websocketUrl);
-            webSocket.request(1);
+            log.debug("Listener.onOpen");
+            webSocket.request(1); // request first item
         }
 
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
             buffer.append(data);
-
             if (last) {
-                queue.offer(buffer.toString());
-                buffer.setLength(0);
+                String message = buffer.toString();
+                // try to offer without blocking — drop if full
+                boolean accepted = queue.offer(message);
+                if (!accepted) {
+                    messagesDropped.inc();
+                    log.warn("Dropping WebSocket message because queue is full (capacity={})", queueCapacity);
+                }
+                // create a fresh buffer to free previous backing array
+                buffer = new StringBuilder();
             }
-
             webSocket.request(1);
-            return null;
+            return CompletableFuture.completedFuture(null);
         }
 
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-            connectionsClosed.inc();
             log.warn("WebSocket closed: code={} reason={}", statusCode, reason);
-            ws = null; // trigger reconnect
-            return null;
+            connectionsClosed.inc();
+            // mark wsRef null to trigger reconnect
+            wsRef.set(null);
+            if (closeSignal != null) closeSignal.complete(null);
+            return CompletableFuture.completedFuture(null);
         }
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             connectFailures.inc();
             log.error("WebSocket error: {}", error.getMessage(), error);
-            ws = null; // trigger reconnect
+            // clear reference so run() will reconnect
+            wsRef.set(null);
+            if (closeSignal != null) closeSignal.completeExceptionally(error);
         }
     }
 }
