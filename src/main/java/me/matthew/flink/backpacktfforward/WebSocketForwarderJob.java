@@ -47,6 +47,7 @@ public class WebSocketForwarderJob {
                         .setParallelism(1);
 
         var parsed = source
+                .name("BackpackTFWebSocketSource")
                 .flatMap((String event, Collector<ListingUpdate> out) -> {
                     try {
                         List<ListingUpdate> updates =
@@ -57,14 +58,19 @@ public class WebSocketForwarderJob {
                         log.error("Failed to parse WebSocket payload: {}", event, e);
                     }
                 })
-                .returns(ListingUpdate.class);
+                .returns(ListingUpdate.class)
+                .name("BackpackTFWebSocketPayloadParser");
 
         // Route events
         parsed.filter(lu -> "listing-update".equals(lu.getEvent()))
-                .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass, upsertBatchSize, upsertBatchIntervalMs));
+                .name("BackpackTFListingUpdateFilter")
+                .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass, upsertBatchSize, upsertBatchIntervalMs))
+                .name("BackpackTFListingUpsertSink");
 
         parsed.filter(lu -> "listing-delete".equals(lu.getEvent()))
-                .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs));
+                .name("BackpackTFListingUpdateFilter")
+                .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs))
+                .name("BackpackTFListingDeleteSink");
 
         env.execute("BackpackTF WebSocket Forwarder");
     }
