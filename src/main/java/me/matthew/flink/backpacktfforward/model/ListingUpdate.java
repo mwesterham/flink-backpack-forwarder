@@ -141,7 +141,7 @@ public class ListingUpdate {
         public String customNameStyle;
         public String clazz; // `class` renamed to clazz
         public String style;
-        public String role;
+        public Object role;
         public String tradeOfferUrl;
         public List<?> bans;
     }

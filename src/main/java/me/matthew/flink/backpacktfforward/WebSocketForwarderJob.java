@@ -2,6 +2,7 @@ package me.matthew.flink.backpacktfforward;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
@@ -54,9 +55,13 @@ public class WebSocketForwarderJob {
                 .flatMap((String event, Collector<ListingUpdate> out) -> {
                     try {
                         List<ListingUpdate> updates =
-                                mapper.readValue(event, new TypeReference<List<ListingUpdate>>() {
-                                });
+                                mapper.readValue(event, new TypeReference<List<ListingUpdate>>() {});
+
                         updates.forEach(out::collect);
+
+                    } catch (MismatchedInputException e) {
+                        log.error("Failed to parse JSON. Path = {}", e.getPathReference());
+                        log.error("Raw message = {}", event);
                     } catch (Exception e) {
                         log.error("Failed to parse WebSocket payload: {}", event, e);
                     }
