@@ -7,6 +7,9 @@ import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
 import me.matthew.flink.backpacktfforward.sink.ListingUpsertSink;
 import me.matthew.flink.backpacktfforward.source.WebSocketSource;
+import org.apache.flink.api.common.functions.RichMapFunction;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
@@ -60,6 +63,25 @@ public class WebSocketForwarderJob {
                 })
                 .returns(ListingUpdate.class)
                 .name("BackpackTFWebSocketPayloadParser");
+
+        parsed.map(new RichMapFunction<ListingUpdate, ListingUpdate>() {
+
+            private Counter incomingWsEvents;
+
+            @Override
+            public ListingUpdate map(ListingUpdate listingUpdate) throws Exception {
+                incomingWsEvents.inc();
+                return listingUpdate;
+            }
+
+            @Override
+            public void open(Configuration parameters) throws Exception {
+                incomingWsEvents =
+                        getRuntimeContext()
+                                .getMetricGroup()
+                                .counter("incoming_ws_events");
+            }
+        });
 
         // Route events
         parsed.filter(lu -> "listing-update".equals(lu.getEvent()))
