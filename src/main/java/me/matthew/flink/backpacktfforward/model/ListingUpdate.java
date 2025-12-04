@@ -143,7 +143,7 @@ public class ListingUpdate {
         public String style;
         public Object role;
         public String tradeOfferUrl;
-        public List<?> bans;
+        public Object bans;
     }
 
     public static class PriceDeserializer extends JsonDeserializer<List<Price>> {

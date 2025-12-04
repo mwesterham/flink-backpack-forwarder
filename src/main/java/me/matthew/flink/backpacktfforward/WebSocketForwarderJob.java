@@ -60,7 +60,7 @@ public class WebSocketForwarderJob {
                         updates.forEach(out::collect);
 
                     } catch (MismatchedInputException e) {
-                        log.error("Failed to parse JSON. Path = {}", e.getPathReference());
+                        log.error("Failed to parse JSON. Path = {}; Error = {}", e.getPathReference(), e);
                         log.error("Raw message = {}", event);
                     } catch (Exception e) {
                         log.error("Failed to parse WebSocket payload: {}", event, e);
