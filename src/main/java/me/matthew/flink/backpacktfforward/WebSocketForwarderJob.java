@@ -57,7 +57,18 @@ public class WebSocketForwarderJob {
                         List<ListingUpdate> updates =
                                 mapper.readValue(event, new TypeReference<List<ListingUpdate>>() {});
 
-                        updates.forEach(out::collect);
+                        if (updates == null) {
+                            log.error("Parsed JSON returned NULL list. Raw message = {}", event);
+                            return;
+                        }
+
+                        for (ListingUpdate u : updates) {
+                            if (u == null) {
+                                log.error("Parsed JSON contains NULL element. Raw message = {}", event);
+                            } else {
+                                out.collect(u);
+                            }
+                        }
 
                     } catch (MismatchedInputException e) {
                         log.error("Failed to parse JSON. Path = {}; Error = {}", e.getPathReference(), e);
@@ -89,12 +100,12 @@ public class WebSocketForwarderJob {
         });
 
         // Route events
-        parsed.filter(lu -> "listing-update".equals(lu.getEvent()))
+        parsed.filter(lu -> lu != null && lu.getEvent() != null && lu.getEvent().equals("listing-update"))
                 .name("BackpackTFListingUpdateFilter")
                 .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass, upsertBatchSize, upsertBatchIntervalMs))
                 .name("BackpackTFListingUpsertSink");
 
-        parsed.filter(lu -> "listing-delete".equals(lu.getEvent()))
+        parsed.filter(lu -> lu != null && lu.getEvent() != null && lu.getEvent().equals("listing-delete"))
                 .name("BackpackTFListingUpdateFilter")
                 .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs))
                 .name("BackpackTFListingDeleteSink");

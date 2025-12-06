@@ -121,7 +121,7 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             stmt.setString(1, payload.getId());
             stmt.setString(2, payload.getSteamid());
             stmt.setInt(3, payload.getItem().getDefindex());
-            stmt.setInt(4, payload.getItem().getQuality().getId());
+            stmt.setObject(4, payload.getItem().getQuality() != null ? payload.getItem().getQuality().getId() : null, java.sql.Types.INTEGER);
             stmt.setString(5, payload.getIntent());
             stmt.setInt(6, payload.getAppid());
 
