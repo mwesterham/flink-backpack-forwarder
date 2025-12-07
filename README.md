@@ -77,7 +77,7 @@ CREATE TABLE listings (
     id TEXT PRIMARY KEY,
     steamid TEXT NOT NULL,
     item_defindex INT NOT NULL,
-    item_quality_id INT NOT NULL,
+    item_quality_id INT,
     intent TEXT NOT NULL,
     appid INT,
     metal DOUBLE PRECISION,
