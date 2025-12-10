@@ -7,8 +7,7 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 @Slf4j
 public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
@@ -77,98 +76,122 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
 
-        // Initialize JDBC connection
         Class.forName("org.postgresql.Driver");
         connection = DriverManager.getConnection(jdbcUrl, username, password);
-        connection.setAutoCommit(false); // use batching
+        connection.setAutoCommit(false);
         stmt = connection.prepareStatement(UPSERT_SQL);
 
-        // Metrics
-        upsertCounter = getRuntimeContext()
-                .getMetricGroup().counter("listing_upserts");
-
+        upsertCounter = getRuntimeContext().getMetricGroup().counter("listing_upserts");
         lastFlushTime = System.currentTimeMillis();
     }
 
     @Override
     public void invoke(ListingUpdate lu, Context context) throws Exception {
         batch.add(lu);
-        var payload = lu.getPayload();
-
-
-//        log.info("Preparing to upsert listing: id={} steamid={}, defindex={}, quality={}, intent={}",
-//                payload.getId(),
-//                payload.getSteamid(),
-//                payload.getItem().getDefindex(),
-//                payload.getItem().getQuality().getId(),
-//                payload.getIntent());
 
         long now = System.currentTimeMillis();
-
         if (batch.size() >= batchSize || now - lastFlushTime >= batchIntervalMs) {
-//            log.info("Preparing to commit batch upserts currentBatchCount={} lastFlushTime={}", batch.size(), lastFlushTime);
             flushBatch();
             lastFlushTime = now;
         }
     }
 
+    /**
+     * Flush with ordering + retry on deadlock (40P01)
+     */
     private void flushBatch() throws SQLException {
         if (batch.isEmpty()) return;
 
-        for (ListingUpdate lu : batch) {
-            var payload = lu.getPayload();
-            // Set parameters (like in your original JdbcSink lambda)
-            stmt.setString(1, payload.getId());
-            stmt.setString(2, payload.getSteamid());
-            stmt.setInt(3, payload.getItem().getDefindex());
-            stmt.setObject(4, payload.getItem().getQuality() != null ? payload.getItem().getQuality().getId() : null, java.sql.Types.INTEGER);
-            stmt.setString(5, payload.getIntent());
-            stmt.setInt(6, payload.getAppid());
+        // 1. Order deterministically by primary key to avoid deadlocks
+        batch.sort(Comparator.comparing(l -> l.getPayload().getId()));
 
-            // Currencies
-            if (payload.getCurrencies() != null && payload.getCurrencies().getMetal() != null)
-                stmt.setDouble(7, payload.getCurrencies().getMetal());
-            else stmt.setNull(7, Types.DOUBLE);
+        int maxRetries = 5;
+        int attempt = 0;
 
-            if (payload.getCurrencies() != null && payload.getCurrencies().getKeys() != null)
-                stmt.setInt(8, payload.getCurrencies().getKeys());
-            else stmt.setNull(8, Types.INTEGER);
+        while (true) {
+            try {
+                stmt.clearBatch();
 
-            // Value
-            if (payload.getValue() != null)
-                stmt.setDouble(9, payload.getValue().getRaw());
-            else stmt.setNull(9, Types.DOUBLE);
+                for (ListingUpdate lu : batch) {
+                    var payload = lu.getPayload();
 
-            stmt.setString(10, payload.getValue() != null ? payload.getValue().getShortStr() : null);
-            stmt.setString(11, payload.getValue() != null ? payload.getValue().getLongStr() : null);
+                    stmt.setString(1, payload.getId());
+                    stmt.setString(2, payload.getSteamid());
+                    stmt.setInt(3, payload.getItem().getDefindex());
+                    stmt.setObject(4, payload.getItem().getQuality() != null ? payload.getItem().getQuality().getId() : null, Types.INTEGER);
+                    stmt.setString(5, payload.getIntent());
+                    stmt.setInt(6, payload.getAppid());
 
-            stmt.setString(12, payload.getDetails());
-            stmt.setTimestamp(13, new Timestamp(payload.getListedAt() * 1000));
-            stmt.setString(14, payload.getItem() != null ? payload.getItem().getMarketName() : null);
-            stmt.setString(15, payload.getStatus());
-            stmt.setString(16, payload.getUserAgent() != null ? payload.getUserAgent().getClient() : null);
-            stmt.setString(17, payload.getUser() != null ? payload.getUser().getName() : null);
+                    if (payload.getCurrencies() != null && payload.getCurrencies().getMetal() != null)
+                        stmt.setDouble(7, payload.getCurrencies().getMetal());
+                    else stmt.setNull(7, Types.DOUBLE);
 
-            stmt.setObject(18, payload.getUser() != null ? payload.getUser().getPremium() : null, Types.BOOLEAN);
-            stmt.setObject(19, payload.getUser() != null ? payload.getUser().getOnline() : null, Types.BOOLEAN);
-            stmt.setObject(20, payload.getUser() != null ? payload.getUser().getBanned() : null, Types.BOOLEAN);
-            stmt.setString(21, payload.getUser() != null ? payload.getUser().getTradeOfferUrl() : null);
+                    if (payload.getCurrencies() != null && payload.getCurrencies().getKeys() != null)
+                        stmt.setInt(8, payload.getCurrencies().getKeys());
+                    else stmt.setNull(8, Types.INTEGER);
 
-            stmt.setObject(22, payload.getItem() != null ? payload.getItem().getTradable() : null, Types.BOOLEAN);
-            stmt.setObject(23, payload.getItem() != null ? payload.getItem().getCraftable() : null, Types.BOOLEAN);
-            stmt.setString(24, payload.getItem() != null && payload.getItem().getQuality() != null ? payload.getItem().getQuality().getColor() : null);
-            stmt.setString(25, payload.getItem() != null && payload.getItem().getParticle() != null ? payload.getItem().getParticle().getName() : null);
-            stmt.setString(26, payload.getItem() != null && payload.getItem().getParticle() != null ? payload.getItem().getParticle().getType() : null);
-            stmt.setTimestamp(27, new Timestamp(payload.getBumpedAt() * 1000));
+                    if (payload.getValue() != null)
+                        stmt.setDouble(9, payload.getValue().getRaw());
+                    else stmt.setNull(9, Types.DOUBLE);
 
-            stmt.addBatch();
+                    stmt.setString(10, payload.getValue() != null ? payload.getValue().getShortStr() : null);
+                    stmt.setString(11, payload.getValue() != null ? payload.getValue().getLongStr() : null);
 
-            upsertCounter.inc();
+                    stmt.setString(12, payload.getDetails());
+                    stmt.setTimestamp(13, new Timestamp(payload.getListedAt() * 1000));
+                    stmt.setString(14, payload.getItem() != null ? payload.getItem().getMarketName() : null);
+                    stmt.setString(15, payload.getStatus());
+                    stmt.setString(16, payload.getUserAgent() != null ? payload.getUserAgent().getClient() : null);
+                    stmt.setString(17, payload.getUser() != null ? payload.getUser().getName() : null);
+
+                    stmt.setObject(18, payload.getUser() != null ? payload.getUser().getPremium() : null, Types.BOOLEAN);
+                    stmt.setObject(19, payload.getUser() != null ? payload.getUser().getOnline() : null, Types.BOOLEAN);
+                    stmt.setObject(20, payload.getUser() != null ? payload.getUser().getBanned() : null, Types.BOOLEAN);
+                    stmt.setString(21, payload.getUser() != null ? payload.getUser().getTradeOfferUrl() : null);
+
+                    stmt.setObject(22, payload.getItem() != null ? payload.getItem().getTradable() : null, Types.BOOLEAN);
+                    stmt.setObject(23, payload.getItem() != null ? payload.getItem().getCraftable() : null, Types.BOOLEAN);
+                    stmt.setString(24, payload.getItem() != null && payload.getItem().getQuality() != null ? payload.getItem().getQuality().getColor() : null);
+                    stmt.setString(25, payload.getItem() != null && payload.getItem().getParticle() != null ? payload.getItem().getParticle().getName() : null);
+                    stmt.setString(26, payload.getItem() != null && payload.getItem().getParticle() != null ? payload.getItem().getParticle().getType() : null);
+                    stmt.setTimestamp(27, new Timestamp(payload.getBumpedAt() * 1000));
+
+                    stmt.addBatch();
+                    upsertCounter.inc();
+                }
+
+                stmt.executeBatch();
+                connection.commit();
+
+                batch.clear();
+                return; // success
+            }
+            catch (SQLException e) {
+                // Only retry on deadlock
+                if ("40P01".equals(e.getSQLState())) {
+                    attempt++;
+
+                    log.warn("Deadlock detected on batch (attempt {}/{}) - retrying", attempt, maxRetries);
+
+                    connection.rollback();
+
+                    if (attempt > maxRetries) {
+                        log.error("Max deadlock retries exceeded. Failing batch.");
+                        throw e;
+                    }
+
+                    // Exponential jitter backoff
+                    try {
+                        Thread.sleep(50L * attempt + (long)(Math.random() * 30));
+                    } catch (InterruptedException ignored) {}
+
+                    continue; // retry
+                }
+
+                connection.rollback();
+                throw e; // non-deadlock errors fail immediately
+            }
         }
-
-        stmt.executeBatch();
-        connection.commit();
-        batch.clear();
     }
 
     @Override
