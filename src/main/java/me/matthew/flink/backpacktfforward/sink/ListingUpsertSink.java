@@ -1,5 +1,7 @@
 package me.matthew.flink.backpacktfforward.sink;
 
+import dev.failsafe.Failsafe;
+import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import org.apache.flink.configuration.Configuration;
@@ -7,12 +9,13 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
 import java.sql.*;
+import java.time.Duration;
 import java.util.*;
 
 @Slf4j
 public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
 
-    private static final String UPSERT_SQL = """
+    private static final String UPSERT_SQL = """ 
         INSERT INTO listings (
             id, steamid, item_defindex, item_quality_id, intent, appid, metal, keys,
             raw_value, short_value, long_value, details, listed_at,
@@ -64,6 +67,8 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     private final String username;
     private final String password;
 
+    private RetryPolicy<Object> retryPolicy;
+
     public ListingUpsertSink(String jdbcUrl, String username, String password, int batchSize, long batchIntervalMs) {
         this.jdbcUrl = jdbcUrl;
         this.username = username;
@@ -83,6 +88,17 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
 
         upsertCounter = getRuntimeContext().getMetricGroup().counter("listing_upserts");
         lastFlushTime = System.currentTimeMillis();
+
+        // Failsafe retry policy for Postgres deadlocks (40P01)
+        retryPolicy = RetryPolicy.builder()
+                .handle(SQLException.class)
+                .withDelay(Duration.ofMillis(50))
+                .withMaxRetries(5)
+                .handleIf(e -> "40P01".equals(((SQLException) e).getSQLState()))
+                .onRetry(e -> log.warn("Deadlock detected (retry {}): {}",
+                        e.getAttemptCount(), e.getLastException().getMessage()))
+                .onRetriesExceeded(e -> log.error("Max deadlock retries exceeded.", e.getException()))
+                .build();
     }
 
     @Override
@@ -97,64 +113,61 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     }
 
     /**
-     * Flush with ordering + retry on deadlock (40P01)
+     * Flush with deterministic ordering + Failsafe retry
      */
     private void flushBatch() throws SQLException {
-        if (batch.isEmpty()) return;
+        if (batch.isEmpty())
+            return;
 
-        // 1. Order deterministically by primary key to avoid deadlocks
+        // Sort rows by PK to guarantee consistent lock order
         batch.sort(Comparator.comparing(l -> l.getPayload().getId()));
 
-        int maxRetries = 5;
-        int attempt = 0;
-
-        while (true) {
+        Failsafe.with(retryPolicy).run(() -> {
             try {
                 stmt.clearBatch();
 
                 for (ListingUpdate lu : batch) {
-                    var payload = lu.getPayload();
+                    var p = lu.getPayload();
 
-                    stmt.setString(1, payload.getId());
-                    stmt.setString(2, payload.getSteamid());
-                    stmt.setInt(3, payload.getItem().getDefindex());
-                    stmt.setObject(4, payload.getItem().getQuality() != null ? payload.getItem().getQuality().getId() : null, Types.INTEGER);
-                    stmt.setString(5, payload.getIntent());
-                    stmt.setInt(6, payload.getAppid());
+                    stmt.setString(1, p.getId());
+                    stmt.setString(2, p.getSteamid());
+                    stmt.setInt(3, p.getItem().getDefindex());
+                    stmt.setObject(4, p.getItem().getQuality() != null ? p.getItem().getQuality().getId() : null, Types.INTEGER);
+                    stmt.setString(5, p.getIntent());
+                    stmt.setInt(6, p.getAppid());
 
-                    if (payload.getCurrencies() != null && payload.getCurrencies().getMetal() != null)
-                        stmt.setDouble(7, payload.getCurrencies().getMetal());
+                    if (p.getCurrencies() != null && p.getCurrencies().getMetal() != null)
+                        stmt.setDouble(7, p.getCurrencies().getMetal());
                     else stmt.setNull(7, Types.DOUBLE);
 
-                    if (payload.getCurrencies() != null && payload.getCurrencies().getKeys() != null)
-                        stmt.setInt(8, payload.getCurrencies().getKeys());
+                    if (p.getCurrencies() != null && p.getCurrencies().getKeys() != null)
+                        stmt.setInt(8, p.getCurrencies().getKeys());
                     else stmt.setNull(8, Types.INTEGER);
 
-                    if (payload.getValue() != null)
-                        stmt.setDouble(9, payload.getValue().getRaw());
+                    if (p.getValue() != null)
+                        stmt.setDouble(9, p.getValue().getRaw());
                     else stmt.setNull(9, Types.DOUBLE);
 
-                    stmt.setString(10, payload.getValue() != null ? payload.getValue().getShortStr() : null);
-                    stmt.setString(11, payload.getValue() != null ? payload.getValue().getLongStr() : null);
+                    stmt.setString(10, p.getValue() != null ? p.getValue().getShortStr() : null);
+                    stmt.setString(11, p.getValue() != null ? p.getValue().getLongStr() : null);
+                    stmt.setString(12, p.getDetails());
+                    stmt.setTimestamp(13, new Timestamp(p.getListedAt() * 1000));
+                    stmt.setString(14, p.getItem() != null ? p.getItem().getMarketName() : null);
+                    stmt.setString(15, p.getStatus());
+                    stmt.setString(16, p.getUserAgent() != null ? p.getUserAgent().getClient() : null);
+                    stmt.setString(17, p.getUser() != null ? p.getUser().getName() : null);
 
-                    stmt.setString(12, payload.getDetails());
-                    stmt.setTimestamp(13, new Timestamp(payload.getListedAt() * 1000));
-                    stmt.setString(14, payload.getItem() != null ? payload.getItem().getMarketName() : null);
-                    stmt.setString(15, payload.getStatus());
-                    stmt.setString(16, payload.getUserAgent() != null ? payload.getUserAgent().getClient() : null);
-                    stmt.setString(17, payload.getUser() != null ? payload.getUser().getName() : null);
+                    stmt.setObject(18, p.getUser() != null ? p.getUser().getPremium() : null, Types.BOOLEAN);
+                    stmt.setObject(19, p.getUser() != null ? p.getUser().getOnline() : null, Types.BOOLEAN);
+                    stmt.setObject(20, p.getUser() != null ? p.getUser().getBanned() : null, Types.BOOLEAN);
+                    stmt.setString(21, p.getUser() != null ? p.getUser().getTradeOfferUrl() : null);
 
-                    stmt.setObject(18, payload.getUser() != null ? payload.getUser().getPremium() : null, Types.BOOLEAN);
-                    stmt.setObject(19, payload.getUser() != null ? payload.getUser().getOnline() : null, Types.BOOLEAN);
-                    stmt.setObject(20, payload.getUser() != null ? payload.getUser().getBanned() : null, Types.BOOLEAN);
-                    stmt.setString(21, payload.getUser() != null ? payload.getUser().getTradeOfferUrl() : null);
-
-                    stmt.setObject(22, payload.getItem() != null ? payload.getItem().getTradable() : null, Types.BOOLEAN);
-                    stmt.setObject(23, payload.getItem() != null ? payload.getItem().getCraftable() : null, Types.BOOLEAN);
-                    stmt.setString(24, payload.getItem() != null && payload.getItem().getQuality() != null ? payload.getItem().getQuality().getColor() : null);
-                    stmt.setString(25, payload.getItem() != null && payload.getItem().getParticle() != null ? payload.getItem().getParticle().getName() : null);
-                    stmt.setString(26, payload.getItem() != null && payload.getItem().getParticle() != null ? payload.getItem().getParticle().getType() : null);
-                    stmt.setTimestamp(27, new Timestamp(payload.getBumpedAt() * 1000));
+                    stmt.setObject(22, p.getItem() != null ? p.getItem().getTradable() : null, Types.BOOLEAN);
+                    stmt.setObject(23, p.getItem() != null ? p.getItem().getCraftable() : null, Types.BOOLEAN);
+                    stmt.setString(24, p.getItem() != null && p.getItem().getQuality() != null ? p.getItem().getQuality().getColor() : null);
+                    stmt.setString(25, p.getItem() != null && p.getItem().getParticle() != null ? p.getItem().getParticle().getName() : null);
+                    stmt.setString(26, p.getItem() != null && p.getItem().getParticle() != null ? p.getItem().getParticle().getType() : null);
+                    stmt.setTimestamp(27, new Timestamp(p.getBumpedAt() * 1000));
 
                     stmt.addBatch();
                     upsertCounter.inc();
@@ -162,36 +175,14 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
 
                 stmt.executeBatch();
                 connection.commit();
-
-                batch.clear();
-                return; // success
             }
-            catch (SQLException e) {
-                // Only retry on deadlock
-                if ("40P01".equals(e.getSQLState())) {
-                    attempt++;
-
-                    log.warn("Deadlock detected on batch (attempt {}/{}) - retrying", attempt, maxRetries);
-
-                    connection.rollback();
-
-                    if (attempt > maxRetries) {
-                        log.error("Max deadlock retries exceeded. Failing batch.");
-                        throw e;
-                    }
-
-                    // Exponential jitter backoff
-                    try {
-                        Thread.sleep(50L * attempt + (long)(Math.random() * 30));
-                    } catch (InterruptedException ignored) {}
-
-                    continue; // retry
-                }
-
+            catch (SQLException ex) {
                 connection.rollback();
-                throw e; // non-deadlock errors fail immediately
+                throw ex;
             }
-        }
+        });
+
+        batch.clear();
     }
 
     @Override
