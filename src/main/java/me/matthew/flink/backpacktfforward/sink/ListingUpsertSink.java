@@ -3,14 +3,17 @@ package me.matthew.flink.backpacktfforward.sink;
 import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
+import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
 import java.sql.*;
-import java.time.Duration;
 import java.util.*;
+
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERTS;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERT_RETRIES;
 
 @Slf4j
 public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
@@ -66,7 +69,6 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     private final String jdbcUrl;
     private final String username;
     private final String password;
-
     private RetryPolicy<Object> retryPolicy;
 
     public ListingUpsertSink(String jdbcUrl, String username, String password, int batchSize, long batchIntervalMs) {
@@ -86,19 +88,14 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
         connection.setAutoCommit(false);
         stmt = connection.prepareStatement(UPSERT_SQL);
 
-        upsertCounter = getRuntimeContext().getMetricGroup().counter("listing_upserts");
+        upsertCounter = getRuntimeContext().getMetricGroup().counter(LISTING_UPSERTS);
+        SqlRetryMetrics sqlRetryMetrics = new SqlRetryMetrics(
+                getRuntimeContext().getMetricGroup(),
+                LISTING_UPSERT_RETRIES
+        );
         lastFlushTime = System.currentTimeMillis();
 
-        // Failsafe retry policy for Postgres deadlocks (40P01)
-        retryPolicy = RetryPolicy.builder()
-                .handle(SQLException.class)
-                .withDelay(Duration.ofMillis(50))
-                .withMaxRetries(5)
-                .handleIf(e -> "40P01".equals(((SQLException) e).getSQLState()))
-                .onRetry(e -> log.warn("Deadlock detected (retry {}): {}",
-                        e.getAttemptCount(), e.getLastException().getMessage()))
-                .onRetriesExceeded(e -> log.error("Max deadlock retries exceeded.", e.getException()))
-                .build();
+        retryPolicy = sqlRetryMetrics.deadlockRetryPolicy(5);
     }
 
     @Override

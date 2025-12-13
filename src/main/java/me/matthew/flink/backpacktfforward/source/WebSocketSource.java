@@ -16,6 +16,8 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.*;
+
 @Slf4j
 public class WebSocketSource extends RichSourceFunction<String> {
 
@@ -74,16 +76,16 @@ public class WebSocketSource extends RichSourceFunction<String> {
     public void open(Configuration parameters) {
         var metrics = getRuntimeContext().getMetricGroup();
 
-        messagesReceived = metrics.counter("websocket_source_messages_received");
-        messagesDropped = metrics.counter("websocket_source_messages_dropped");
-        connectionsOpened = metrics.counter("websocket_source_connections_opened");
-        connectionsClosed = metrics.counter("websocket_source_connections_closed");
-        connectFailures = metrics.counter("websocket_source_connection_failures");
-        reconnectAttempts = metrics.counter("websocket_source_reconnect_attempts");
-        heartbeatFailures = metrics.counter("websocket_source_heartbeat_failures");
+        messagesReceived = metrics.counter(WS_MESSAGES_RECEIVED);
+        messagesDropped = metrics.counter(WS_MESSAGES_DROPPED);
+        connectionsOpened = metrics.counter(WS_CONNECTIONS_OPENED);
+        connectionsClosed = metrics.counter(WS_CONNECTIONS_CLOSED);
+        connectFailures = metrics.counter(WS_CONNECTION_FAILURES);
+        reconnectAttempts = metrics.counter(WS_RECONNECT_ATTEMPTS);
+        heartbeatFailures = metrics.counter(WS_HEARTBEAT_FAILURES);
 
         lastBackoffMs = new AtomicLong(0L);
-        metrics.gauge("last_reconnect_backoff_ms", (Gauge<Long>) lastBackoffMs::get);
+        metrics.gauge(LAST_RECONNECT_BACKOFF_MS, (Gauge<Long>) lastBackoffMs::get);
         // queue gauge will be registered in run() after queue is created
 
         wsRef = new AtomicReference<>();
@@ -210,7 +212,8 @@ public class WebSocketSource extends RichSourceFunction<String> {
             if (w != null) {
                 try {
                     w.sendClose(WebSocket.NORMAL_CLOSURE, "Shutting down").join();
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
                 connectionsClosed.inc();
                 log.info("WebSocket closed normally.");
             }
@@ -239,7 +242,8 @@ public class WebSocketSource extends RichSourceFunction<String> {
         if (connectExecutor != null) {
             try {
                 connectExecutor.shutdownNow();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
             connectExecutor = null;
         }
     }

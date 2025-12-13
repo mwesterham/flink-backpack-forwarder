@@ -17,6 +17,8 @@ import org.apache.flink.util.Collector;
 
 import java.util.List;
 
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_WS_EVENTS;
+
 @Slf4j
 public class WebSocketForwarderJob {
 
@@ -95,7 +97,7 @@ public class WebSocketForwarderJob {
                 incomingWsEvents =
                         getRuntimeContext()
                                 .getMetricGroup()
-                                .counter("incoming_ws_events");
+                                .counter(INCOMING_WS_EVENTS);
             }
         });
 
