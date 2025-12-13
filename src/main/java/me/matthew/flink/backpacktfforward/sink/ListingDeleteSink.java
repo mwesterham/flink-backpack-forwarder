@@ -13,6 +13,9 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.DELETED_LISTINGS;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.DELETED_LISTINGS_RETRIES;
@@ -20,35 +23,27 @@ import static me.matthew.flink.backpacktfforward.metrics.Metrics.DELETED_LISTING
 @Slf4j
 public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
 
+    private static final String MARK_DELETED_SQL = """
+            UPDATE listings
+            SET is_deleted = true, updated_at = now()
+            WHERE id = ?;
+            """;
+
     private final String jdbcUrl;
     private final String username;
     private final String password;
+    private final int batchSize;
+    private final long batchIntervalMs;
 
     private transient Connection connection;
     private transient PreparedStatement markDeletedStmt;
     private transient Counter deleteCounter;
-
     private transient RetryPolicy<Object> retryPolicy;
 
-    private static final String MARK_DELETED_SQL = """
-        UPDATE listings
-        SET is_deleted = true, updated_at = now()
-        WHERE id = ?;
-        """;
+    private final List<ListingUpdate> batch = new ArrayList<>();
+    private long lastFlushTime;
 
-    // Flush controls
-    private final int batchSize;
-    private final long batchIntervalMs;
-    private int currentBatchCount = 0;
-    private long lastFlushTime = 0;
-
-    public ListingDeleteSink(
-            String jdbcUrl,
-            String username,
-            String password,
-            int batchSize,
-            long batchIntervalMs
-    ) {
+    public ListingDeleteSink(String jdbcUrl, String username, String password, int batchSize, long batchIntervalMs) {
         this.jdbcUrl = jdbcUrl;
         this.username = username;
         this.password = password;
@@ -59,9 +54,11 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
     @Override
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
+
         Class.forName("org.postgresql.Driver");
         connection = DriverManager.getConnection(jdbcUrl, username, password);
-        connection.setAutoCommit(false); // use batching
+        connection.setAutoCommit(false);
+
         markDeletedStmt = connection.prepareStatement(MARK_DELETED_SQL);
 
         deleteCounter = getRuntimeContext()
@@ -78,29 +75,32 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
     }
 
     @Override
-    public void invoke(ListingUpdate value, Context context) throws Exception {
-        var payload = value.getPayload();
-
-        markDeletedStmt.setString(1, payload.getId());
-        markDeletedStmt.addBatch();
-
-        currentBatchCount++;
-        deleteCounter.inc();
+    public void invoke(ListingUpdate lu, Context context) throws Exception {
+        batch.add(lu);
 
         long now = System.currentTimeMillis();
-        if (currentBatchCount >= batchSize || (now - lastFlushTime) >= batchIntervalMs) {
+        if (batch.size() >= batchSize || now - lastFlushTime >= batchIntervalMs) {
             flushBatch();
             lastFlushTime = now;
         }
     }
 
     private void flushBatch() throws SQLException {
-        if (currentBatchCount == 0) {
-            return;
-        }
+        if (batch.isEmpty()) return;
+
+        // Sort by ID to prevent deadlocks
+        batch.sort(Comparator.comparing(l -> l.getPayload().getId()));
 
         Failsafe.with(retryPolicy).run(() -> {
             try {
+                markDeletedStmt.clearBatch();
+
+                for (ListingUpdate lu : batch) {
+                    markDeletedStmt.setString(1, lu.getPayload().getId());
+                    markDeletedStmt.addBatch();
+                    deleteCounter.inc();
+                }
+
                 markDeletedStmt.executeBatch();
                 connection.commit();
             } catch (SQLException e) {
@@ -109,19 +109,16 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
             }
         });
 
-        currentBatchCount = 0;
+        batch.clear();
     }
 
     @Override
     public void close() throws Exception {
         flushBatch();
 
-        if (markDeletedStmt != null) {
-            markDeletedStmt.close();
-        }
-        if (connection != null) {
-            connection.close();
-        }
+        if (markDeletedStmt != null) markDeletedStmt.close();
+        if (connection != null) connection.close();
+
         super.close();
     }
 }

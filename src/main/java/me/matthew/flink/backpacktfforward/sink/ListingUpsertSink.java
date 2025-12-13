@@ -9,8 +9,15 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
-import java.sql.*;
-import java.util.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERTS;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERT_RETRIES;

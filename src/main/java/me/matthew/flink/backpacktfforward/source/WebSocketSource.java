@@ -16,7 +16,14 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.*;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.LAST_RECONNECT_BACKOFF_MS;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_CONNECTIONS_CLOSED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_CONNECTIONS_OPENED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_CONNECTION_FAILURES;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_HEARTBEAT_FAILURES;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_MESSAGES_DROPPED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_MESSAGES_RECEIVED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.WS_RECONNECT_ATTEMPTS;
 
 @Slf4j
 public class WebSocketSource extends RichSourceFunction<String> {
