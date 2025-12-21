@@ -51,6 +51,17 @@ Additional Kafka consumer properties can be set using environment variables with
 - `KAFKA_CONSUMER_SESSION_TIMEOUT_MS`: Session timeout in milliseconds
 - `KAFKA_CONSUMER_HEARTBEAT_INTERVAL_MS`: Heartbeat interval in milliseconds
 
+#### Timestamp-Based Consumer Start
+
+- `KAFKA_START_TIMESTAMP`: Unix timestamp in milliseconds to start consuming from (optional)
+  - If not set: Consumer starts from latest messages (default behavior)
+  - If set: Consumer starts from first message at or after the specified timestamp
+  - If timestamp is before earliest available message: Consumer starts from beginning of topic
+  - Example values:
+    - `0`: Start from beginning of topic (equivalent to earliest)
+    - `1703936200000`: Start from December 20, 2024 10:30:00 UTC
+    - `echo $(date -d '1 hour ago' +%s)000`: Start from 1 hour ago (bash)
+
 #### Example Kafka Configuration
 
 ```bash
@@ -64,6 +75,11 @@ export KAFKA_CONSUMER_AUTO_OFFSET_RESET="earliest"
 export KAFKA_CONSUMER_ENABLE_AUTO_COMMIT="false"
 export KAFKA_CONSUMER_SESSION_TIMEOUT_MS="30000"
 export KAFKA_CONSUMER_HEARTBEAT_INTERVAL_MS="3000"
+
+# Timestamp-based start (optional)
+export KAFKA_START_TIMESTAMP="1703936200000"  # Start from specific timestamp
+# export KAFKA_START_TIMESTAMP="0"            # Start from beginning of topic
+# export KAFKA_START_TIMESTAMP="$(date -d '1 hour ago' +%s)000"  # Start from 1 hour ago
 ```
 
 #### Kafka Message Format
@@ -201,6 +217,19 @@ mvn clean package && \
 KAFKA_BROKERS="localhost:9092" \
 KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
 KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
+DB_URL="jdbc:postgresql://localhost:5432/testdb" \
+DB_USERNAME="testuser" \
+DB_PASSWORD="testpass" \
+flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+```
+
+To start from a specific timestamp, add `KAFKA_START_TIMESTAMP`:
+```
+mvn clean package && \
+KAFKA_BROKERS="localhost:9092" \
+KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
+KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
+KAFKA_START_TIMESTAMP="0" \
 DB_URL="jdbc:postgresql://localhost:5432/testdb" \
 DB_USERNAME="testuser" \
 DB_PASSWORD="testpass" \
