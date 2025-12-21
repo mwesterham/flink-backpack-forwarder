@@ -6,6 +6,7 @@ import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
 import me.matthew.flink.backpacktfforward.sink.ListingUpsertSink;
 import me.matthew.flink.backpacktfforward.parser.KafkaMessageParser;
 import me.matthew.flink.backpacktfforward.source.KafkaMessageSource;
+import me.matthew.flink.backpacktfforward.source.KafkaSourceWithMetrics;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
@@ -14,7 +15,7 @@ import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.kafka.common.KafkaException;
 
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_WS_EVENTS;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_EVENTS;
 
 @Slf4j
 public class WebSocketForwarderJob {
@@ -57,28 +58,31 @@ public class WebSocketForwarderJob {
                 org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(), 
                 "BackpackTFKafkaSource");
 
-        var parsed = source
-                .name("BackpackTFKafkaSource")
+        // Add Kafka-specific metrics collection
+        var sourceWithMetrics = KafkaSourceWithMetrics.addMetrics(source)
+                .name("BackpackTFKafkaSourceWithMetrics");
+
+        var parsed = sourceWithMetrics
                 .flatMap(new KafkaMessageParser())
                 .returns(ListingUpdate.class)
                 .name("BackpackTFKafkaMessageParser");
 
         parsed.map(new RichMapFunction<ListingUpdate, ListingUpdate>() {
 
-            private Counter incomingWsEvents;
+            private Counter incomingEvents;
 
             @Override
             public ListingUpdate map(ListingUpdate listingUpdate) throws Exception {
-                incomingWsEvents.inc();
+                incomingEvents.inc();
                 return listingUpdate;
             }
 
             @Override
             public void open(Configuration parameters) throws Exception {
-                incomingWsEvents =
+                incomingEvents =
                         getRuntimeContext()
                                 .getMetricGroup()
-                                .counter(INCOMING_WS_EVENTS);
+                                .counter(INCOMING_EVENTS);
             }
         });
 
