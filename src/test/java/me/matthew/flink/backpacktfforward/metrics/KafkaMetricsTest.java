@@ -16,7 +16,6 @@ class KafkaMetricsTest {
         assertNotNull(Metrics.KAFKA_MESSAGES_CONSUMED);
         assertNotNull(Metrics.KAFKA_MESSAGES_PARSED_SUCCESS);
         assertNotNull(Metrics.KAFKA_MESSAGES_PARSED_FAILED);
-        assertNotNull(Metrics.KAFKA_CONSUMER_LAG);
         assertNotNull(Metrics.KAFKA_CONSUMER_REBALANCES);
         assertNotNull(Metrics.KAFKA_OFFSET_COMMITS_SUCCESS);
         assertNotNull(Metrics.KAFKA_OFFSET_COMMITS_FAILED);
@@ -31,7 +30,6 @@ class KafkaMetricsTest {
         assertTrue(Metrics.KAFKA_MESSAGES_CONSUMED.startsWith("kafka_"));
         assertTrue(Metrics.KAFKA_MESSAGES_PARSED_SUCCESS.startsWith("kafka_"));
         assertTrue(Metrics.KAFKA_MESSAGES_PARSED_FAILED.startsWith("kafka_"));
-        assertTrue(Metrics.KAFKA_CONSUMER_LAG.startsWith("kafka_"));
         assertTrue(Metrics.KAFKA_CONSUMER_REBALANCES.startsWith("kafka_"));
         assertTrue(Metrics.KAFKA_OFFSET_COMMITS_SUCCESS.startsWith("kafka_"));
         assertTrue(Metrics.KAFKA_OFFSET_COMMITS_FAILED.startsWith("kafka_"));

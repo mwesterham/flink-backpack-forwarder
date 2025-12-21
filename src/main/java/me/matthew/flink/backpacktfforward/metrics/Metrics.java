@@ -11,7 +11,6 @@ public final class Metrics {
     public static final String KAFKA_MESSAGES_PARSED_FAILED = "kafka_messages_parsed_failed";
     
     // Kafka consumer group coordination metrics
-    public static final String KAFKA_CONSUMER_LAG = "kafka_consumer_lag";
     public static final String KAFKA_CONSUMER_REBALANCES = "kafka_consumer_rebalances";
     public static final String KAFKA_OFFSET_COMMITS_SUCCESS = "kafka_offset_commits_success";
     public static final String KAFKA_OFFSET_COMMITS_FAILED = "kafka_offset_commits_failed";

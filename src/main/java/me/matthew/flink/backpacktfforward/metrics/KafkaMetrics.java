@@ -2,15 +2,11 @@ package me.matthew.flink.backpacktfforward.metrics;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.metrics.Counter;
-import org.apache.flink.metrics.Gauge;
 import org.apache.flink.metrics.MetricGroup;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Kafka-specific metrics collector for monitoring consumer performance and health.
- * Provides counters for connection events, rebalancing, and offset management,
- * as well as gauges for consumer lag monitoring.
+ * Provides counters for connection events, rebalancing, and offset management.
  */
 @Slf4j
 public class KafkaMetrics {
@@ -21,9 +17,6 @@ public class KafkaMetrics {
     private final Counter consumerRebalances;
     private final Counter offsetCommitsSuccess;
     private final Counter offsetCommitsFailed;
-    
-    private final AtomicLong consumerLag = new AtomicLong(0);
-    private final Gauge<Long> consumerLagGauge;
     
     /**
      * Creates a new KafkaMetrics instance with all Kafka-specific metrics registered
@@ -41,9 +34,6 @@ public class KafkaMetrics {
         this.consumerRebalances = metricGroup.counter(Metrics.KAFKA_CONSUMER_REBALANCES);
         this.offsetCommitsSuccess = metricGroup.counter(Metrics.KAFKA_OFFSET_COMMITS_SUCCESS);
         this.offsetCommitsFailed = metricGroup.counter(Metrics.KAFKA_OFFSET_COMMITS_FAILED);
-        
-        // Register gauge for consumer lag monitoring
-        this.consumerLagGauge = metricGroup.gauge(Metrics.KAFKA_CONSUMER_LAG, () -> consumerLag.get());
         
         log.info("Kafka metrics initialized successfully");
     }
@@ -100,26 +90,6 @@ public class KafkaMetrics {
     public void recordOffsetCommitFailure() {
         offsetCommitsFailed.inc();
         log.debug("Recorded failed Kafka offset commit. Total failed commits: {}", offsetCommitsFailed.getCount());
-    }
-    
-    /**
-     * Updates the consumer lag metric.
-     * Should be called periodically with the current consumer lag value.
-     * 
-     * @param lag Current consumer lag in number of messages
-     */
-    public void updateConsumerLag(long lag) {
-        consumerLag.set(lag);
-        log.trace("Updated Kafka consumer lag to: {}", lag);
-    }
-    
-    /**
-     * Gets the current consumer lag value.
-     * 
-     * @return Current consumer lag in number of messages
-     */
-    public long getCurrentConsumerLag() {
-        return consumerLag.get();
     }
     
     /**

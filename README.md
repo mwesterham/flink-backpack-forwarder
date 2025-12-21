@@ -281,19 +281,25 @@ curl http://localhost:9249/metrics
 curl http://localhost:9250/metrics | grep kafka_messages
 ```
 
+```
+curl http://localhost:9250/metrics | grep records_lag_max
+```
+
 #### Available Metrics
 
 **Kafka Source Metrics:**
 - `kafka_messages_consumed`: Total messages consumed from Kafka
 - `kafka_messages_parsed_success`: Successfully parsed messages
 - `kafka_messages_parsed_failed`: Failed message parsing attempts
-- `kafka_consumer_lag`: Consumer lag behind latest offset
 - `kafka_consumer_rebalances`: Consumer group rebalancing events
 - `kafka_offset_commits_success`: Successful offset commits
 - `kafka_offset_commits_failed`: Failed offset commits
 - `kafka_connection_failures`: Kafka connection failures
 - `kafka_reconnect_attempts`: Kafka reconnection attempts
 - `kafka_topic_validation_failures`: Topic validation failures
+
+**Flink's Built-in Kafka Metrics:**
+- `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max`: Maximum consumer lag across all partitions (automatically provided by Flink)
 
 **Database Sink Metrics (unchanged):**
 - `listing_upserts`: Successful listing upsert operations
