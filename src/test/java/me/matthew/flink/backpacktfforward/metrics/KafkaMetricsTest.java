@@ -41,19 +41,6 @@ class KafkaMetricsTest {
     }
 
     @Test
-    void testDeprecatedMetricsStillExist() {
-        // Test that deprecated WebSocket metrics still exist for backward compatibility
-        assertNotNull(Metrics.INCOMING_WS_EVENTS);
-        assertNotNull(Metrics.WS_MESSAGES_RECEIVED);
-        assertNotNull(Metrics.WS_MESSAGES_DROPPED);
-        assertNotNull(Metrics.WS_CONNECTIONS_OPENED);
-        assertNotNull(Metrics.WS_CONNECTIONS_CLOSED);
-        assertNotNull(Metrics.WS_CONNECTION_FAILURES);
-        assertNotNull(Metrics.WS_RECONNECT_ATTEMPTS);
-        assertNotNull(Metrics.WS_HEARTBEAT_FAILURES);
-    }
-
-    @Test
     void testNewGeneralMetrics() {
         // Test that new general metrics exist
         assertNotNull(Metrics.INCOMING_EVENTS);

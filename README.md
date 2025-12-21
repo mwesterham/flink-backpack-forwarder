@@ -32,6 +32,83 @@ metrics:
       filter.includes: "*"  # or "taskmanager.*" for TaskManager only
 ```
 
+### Kafka Configuration
+
+This application consumes messages from Kafka instead of directly from WebSocket. The following environment variables are required:
+
+#### Required Environment Variables
+
+- `KAFKA_BROKERS`: Comma-separated list of Kafka broker addresses (e.g., "localhost:9092" or "broker1:9092,broker2:9092")
+- `KAFKA_TOPIC`: Name of the Kafka topic to consume from (e.g., "backpack-tf-listings")
+- `KAFKA_CONSUMER_GROUP`: Consumer group ID for offset management (e.g., "flink-backpack-tf-consumer")
+
+#### Optional Kafka Consumer Properties
+
+Additional Kafka consumer properties can be set using environment variables with the `KAFKA_CONSUMER_` prefix:
+
+- `KAFKA_CONSUMER_AUTO_OFFSET_RESET`: What to do when there is no initial offset (earliest/latest/none)
+- `KAFKA_CONSUMER_ENABLE_AUTO_COMMIT`: Whether to enable auto-commit of offsets (true/false)
+- `KAFKA_CONSUMER_SESSION_TIMEOUT_MS`: Session timeout in milliseconds
+- `KAFKA_CONSUMER_HEARTBEAT_INTERVAL_MS`: Heartbeat interval in milliseconds
+
+#### Example Kafka Configuration
+
+```bash
+# Basic configuration
+export KAFKA_BROKERS="localhost:9092"
+export KAFKA_TOPIC="backpack-tf-listings"
+export KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer"
+
+# Optional consumer properties
+export KAFKA_CONSUMER_AUTO_OFFSET_RESET="earliest"
+export KAFKA_CONSUMER_ENABLE_AUTO_COMMIT="false"
+export KAFKA_CONSUMER_SESSION_TIMEOUT_MS="30000"
+export KAFKA_CONSUMER_HEARTBEAT_INTERVAL_MS="3000"
+```
+
+#### Kafka Message Format
+
+The application expects Kafka messages with the following JSON structure:
+
+```json
+{
+  "data": [/* Original WebSocket ListingUpdate array */],
+  "timestamp": "2024-01-01T12:00:00.000Z",
+  "messageId": "unique-message-id",
+  "source": "websocket"
+}
+```
+
+The `data` field contains the original WebSocket payload that would have been received directly from the BackpackTF WebSocket API.
+
+### Migration from WebSocket to Kafka
+
+This application has been migrated from direct WebSocket consumption to Kafka-based message consumption. The migration provides:
+
+- **Improved Reliability**: Kafka provides message persistence and delivery guarantees
+- **Better Scalability**: Multiple consumer instances can process messages in parallel
+- **Operational Benefits**: Kafka's monitoring, offset management, and consumer group coordination
+- **Decoupling**: Separation between WebSocket connection management and message processing
+
+#### Migration Steps
+
+1. **Deploy Kafka Infrastructure**: Set up Kafka cluster and create the required topic
+2. **Deploy WebSocket Bridge**: Deploy a service that consumes from WebSocket and produces to Kafka
+3. **Update Application Configuration**: Change environment variables from WebSocket URL to Kafka configuration
+4. **Deploy Updated Application**: Deploy this Kafka-enabled version of the Flink application
+5. **Monitor and Validate**: Ensure messages flow correctly and all metrics are healthy
+
+#### Rollback Procedures
+
+If rollback is needed:
+
+1. **Preserve WebSocket Bridge**: Keep the WebSocket-to-Kafka bridge running to maintain message flow
+2. **Revert Configuration**: Change environment variables back to WebSocket configuration
+3. **Deploy Previous Version**: Deploy the WebSocket-based version of the application
+4. **Validate Functionality**: Ensure direct WebSocket consumption is working correctly
+
+Note: The WebSocket bridge can continue running during rollback to maintain Kafka message history.
+
 ### Building the docker file
 
 - One-liner
@@ -121,7 +198,9 @@ start-cluster.sh
 - Startup the job
 ```
 mvn clean package && \
-SOURCE_URL="ws://laputa.local:30331/forwarded" \
+KAFKA_BROKERS="localhost:9092" \
+KAFKA_TOPIC="backpack-tf-listings" \
+KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer" \
 DB_URL="jdbc:postgresql://localhost:5432/testdb" \
 DB_USERNAME="testuser" \
 DB_PASSWORD="testpass" \
@@ -170,8 +249,28 @@ curl http://localhost:9249/metrics
 ```
 
 ```
-curl http://localhost:9250/metrics | grep listing_upsert
+curl http://localhost:9250/metrics | grep kafka_messages
 ```
+
+#### Available Metrics
+
+**Kafka Source Metrics:**
+- `kafka_messages_consumed`: Total messages consumed from Kafka
+- `kafka_messages_parsed_success`: Successfully parsed messages
+- `kafka_messages_parsed_failed`: Failed message parsing attempts
+- `kafka_consumer_lag`: Consumer lag behind latest offset
+- `kafka_consumer_rebalances`: Consumer group rebalancing events
+- `kafka_offset_commits_success`: Successful offset commits
+- `kafka_offset_commits_failed`: Failed offset commits
+- `kafka_connection_failures`: Kafka connection failures
+- `kafka_reconnect_attempts`: Kafka reconnection attempts
+- `kafka_topic_validation_failures`: Topic validation failures
+
+**Database Sink Metrics (unchanged):**
+- `listing_upserts`: Successful listing upsert operations
+- `listing_upsert_retries`: Listing upsert retry attempts
+- `deleted_listings`: Successful listing delete operations
+- `deleted_listings_retries`: Listing delete retry attempts
 
 ### Debugging
 

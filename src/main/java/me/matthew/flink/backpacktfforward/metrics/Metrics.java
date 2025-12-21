@@ -4,25 +4,6 @@ public final class Metrics {
 
     // General application metrics (updated to reflect Kafka source)
     public static final String INCOMING_EVENTS = "incoming_events";
-    public static final String LAST_RECONNECT_BACKOFF_MS = "last_reconnect_backoff_ms";
-
-    // Legacy WebSocket metrics (deprecated - kept for backward compatibility)
-    @Deprecated
-    public static final String INCOMING_WS_EVENTS = "incoming_ws_events";
-    @Deprecated
-    public static final String WS_MESSAGES_RECEIVED = "websocket_source_messages_received";
-    @Deprecated
-    public static final String WS_MESSAGES_DROPPED = "websocket_source_messages_dropped";
-    @Deprecated
-    public static final String WS_CONNECTIONS_OPENED = "websocket_source_connections_opened";
-    @Deprecated
-    public static final String WS_CONNECTIONS_CLOSED = "websocket_source_connections_closed";
-    @Deprecated
-    public static final String WS_CONNECTION_FAILURES = "websocket_source_connection_failures";
-    @Deprecated
-    public static final String WS_RECONNECT_ATTEMPTS = "websocket_source_reconnect_attempts";
-    @Deprecated
-    public static final String WS_HEARTBEAT_FAILURES = "websocket_source_heartbeat_failures";
 
     // Kafka source metrics
     public static final String KAFKA_MESSAGES_CONSUMED = "kafka_messages_consumed";
