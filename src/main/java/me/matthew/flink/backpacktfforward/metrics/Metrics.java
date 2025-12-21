@@ -18,4 +18,8 @@ public final class Metrics {
 
     public static final String LISTING_UPSERTS = "listing_upserts";
     public static final String LISTING_UPSERT_RETRIES = "listing_upsert_retries";
+
+    // Kafka message parsing metrics
+    public static final String KAFKA_MESSAGES_PARSED_SUCCESS = "kafka_messages_parsed_success";
+    public static final String KAFKA_MESSAGES_PARSED_FAILED = "kafka_messages_parsed_failed";
 }
