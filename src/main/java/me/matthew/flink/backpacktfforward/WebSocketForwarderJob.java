@@ -1,21 +1,17 @@
 package me.matthew.flink.backpacktfforward;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
 import me.matthew.flink.backpacktfforward.sink.ListingUpsertSink;
-import me.matthew.flink.backpacktfforward.source.WebSocketSource;
+import me.matthew.flink.backpacktfforward.parser.KafkaMessageParser;
+import me.matthew.flink.backpacktfforward.source.KafkaMessageSource;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
+import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.util.Collector;
-
-import java.util.List;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_WS_EVENTS;
 
@@ -23,13 +19,11 @@ import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_WS_EVE
 public class WebSocketForwarderJob {
 
     public static void main(String[] args) throws Exception {
-        log.info("Starting BackpackTF WebSocketForwarderJob...");
+        log.info("Starting BackpackTF Kafka Forwarder Job...");
 
-        ObjectMapper mapper = new ObjectMapper();
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         // Read env vars safely
-        String sourceUrl = System.getenv("SOURCE_URL");
         String dbUrl = System.getenv("DB_URL");
         String dbUser = System.getenv("DB_USERNAME");
         String dbPass = System.getenv("DB_PASSWORD");
@@ -43,44 +37,20 @@ public class WebSocketForwarderJob {
         log.info("Delete batch size: {}", deleteBatchSize);
         log.info("Delete batch interval (ms): {}", deleteBatchIntervalMs);
 
-        if (sourceUrl == null) throw new IllegalArgumentException("SOURCE_URL is not set");
         if (dbUrl == null || dbUser == null || dbPass == null)
             throw new IllegalArgumentException("Database env vars missing");
 
-        // Always single-threaded WebSocket
-        DataStreamSource<String> source =
-                env.addSource(new WebSocketSource(sourceUrl))
-                        .setParallelism(1);
+        // Create Kafka source with default parallelism
+        KafkaSource<String> kafkaSource = KafkaMessageSource.createSource();
+        DataStreamSource<String> source = env.fromSource(kafkaSource, 
+                org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(), 
+                "BackpackTFKafkaSource");
 
         var parsed = source
-                .name("BackpackTFWebSocketSource")
-                .flatMap((String event, Collector<ListingUpdate> out) -> {
-                    try {
-                        List<ListingUpdate> updates =
-                                mapper.readValue(event, new TypeReference<List<ListingUpdate>>() {});
-
-                        if (updates == null) {
-                            log.error("Parsed JSON returned NULL list. Raw message = {}", event);
-                            return;
-                        }
-
-                        for (ListingUpdate u : updates) {
-                            if (u == null) {
-                                log.error("Parsed JSON contains NULL element. Raw message = {}", event);
-                            } else {
-                                out.collect(u);
-                            }
-                        }
-
-                    } catch (MismatchedInputException e) {
-                        log.error("Failed to parse JSON. Path = {}; Error = {}", e.getPathReference(), e);
-                        log.error("Raw message = {}", event);
-                    } catch (Exception e) {
-                        log.error("Failed to parse WebSocket payload: {}", event, e);
-                    }
-                })
+                .name("BackpackTFKafkaSource")
+                .flatMap(new KafkaMessageParser())
                 .returns(ListingUpdate.class)
-                .name("BackpackTFWebSocketPayloadParser");
+                .name("BackpackTFKafkaMessageParser");
 
         parsed.map(new RichMapFunction<ListingUpdate, ListingUpdate>() {
 
@@ -112,6 +82,6 @@ public class WebSocketForwarderJob {
                 .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs))
                 .name("BackpackTFListingDeleteSink");
 
-        env.execute("BackpackTF WebSocket Forwarder");
+        env.execute("BackpackTF Kafka Forwarder");
     }
 }
