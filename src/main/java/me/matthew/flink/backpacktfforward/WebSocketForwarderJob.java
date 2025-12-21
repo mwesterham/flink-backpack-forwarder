@@ -12,6 +12,7 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.kafka.common.KafkaException;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_WS_EVENTS;
 
@@ -40,8 +41,18 @@ public class WebSocketForwarderJob {
         if (dbUrl == null || dbUser == null || dbPass == null)
             throw new IllegalArgumentException("Database env vars missing");
 
-        // Create Kafka source with default parallelism
-        KafkaSource<String> kafkaSource = KafkaMessageSource.createSource();
+        // Create Kafka source with error handling
+        KafkaSource<String> kafkaSource;
+        try {
+            kafkaSource = KafkaMessageSource.createSource();
+        } catch (KafkaException e) {
+            log.error("Failed to create Kafka source. Please check Kafka configuration and connectivity.", e);
+            throw new IllegalStateException("Kafka source creation failed: " + e.getMessage(), e);
+        } catch (IllegalArgumentException e) {
+            log.error("Invalid Kafka configuration. Please check environment variables.", e);
+            throw e;
+        }
+
         DataStreamSource<String> source = env.fromSource(kafkaSource, 
                 org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(), 
                 "BackpackTFKafkaSource");
@@ -82,6 +93,7 @@ public class WebSocketForwarderJob {
                 .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs))
                 .name("BackpackTFListingDeleteSink");
 
+        log.info("Starting Flink job execution...");
         env.execute("BackpackTF Kafka Forwarder");
     }
 }

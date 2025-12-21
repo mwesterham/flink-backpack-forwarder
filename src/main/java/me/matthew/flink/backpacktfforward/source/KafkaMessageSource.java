@@ -5,7 +5,9 @@ import me.matthew.flink.backpacktfforward.config.KafkaConfiguration;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.kafka.common.KafkaException;
 
+import java.time.Duration;
 import java.util.Properties;
 
 /**
@@ -23,37 +25,55 @@ public class KafkaMessageSource {
      * - Consumer group and topic subscription from environment variables
      * - Additional consumer properties from KAFKA_CONSUMER_* environment variables
      * - Automatic offset initialization (latest for new consumer groups)
+     * - Retry policies for broker connectivity issues
+     * - Graceful shutdown with proper offset commits
      * 
      * @return Configured KafkaSource<String> ready for use in Flink streaming job
      * @throws IllegalArgumentException if required Kafka configuration is missing or invalid
+     * @throws KafkaException if broker connectivity or topic validation fails
      */
     public static KafkaSource<String> createSource() {
         log.info("Creating Kafka source...");
         
-        // Validate configuration first - this will throw if anything is missing
-        KafkaConfiguration.validateConfiguration();
-        
-        // Get configuration values
-        String kafkaBrokers = KafkaConfiguration.getKafkaBrokers();
-        String kafkaTopic = KafkaConfiguration.getKafkaTopic();
-        String consumerGroup = KafkaConfiguration.getConsumerGroup();
-        Properties kafkaProperties = KafkaConfiguration.getKafkaConsumerProperties();
-        
-        log.info("Configuring Kafka source with brokers: {}, topic: {}, consumer group: {}", 
-                kafkaBrokers, kafkaTopic, consumerGroup);
-        
-        // Build the KafkaSource
-        KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
-                .setBootstrapServers(kafkaBrokers)
-                .setTopics(kafkaTopic)
-                .setGroupId(consumerGroup)
-                .setStartingOffsets(OffsetsInitializer.latest())
-                .setValueOnlyDeserializer(new SimpleStringSchema())
-                .setProperties(kafkaProperties)
-                .build();
-        
-        log.info("Kafka source created successfully");
-        return kafkaSource;
+        try {
+            // Validate configuration first - this will throw if anything is missing or unreachable
+            KafkaConfiguration.validateConfiguration();
+            
+            // Get configuration values
+            String kafkaBrokers = KafkaConfiguration.getKafkaBrokers();
+            String kafkaTopic = KafkaConfiguration.getKafkaTopic();
+            String consumerGroup = KafkaConfiguration.getConsumerGroup();
+            Properties kafkaProperties = KafkaConfiguration.getKafkaConsumerProperties();
+            
+            // Add resilience and error handling properties
+            enhancePropertiesForResilience(kafkaProperties);
+            
+            // Add consumer group coordination and monitoring properties
+            enhancePropertiesForCoordination(kafkaProperties);
+            
+            log.info("Configuring Kafka source with brokers: {}, topic: {}, consumer group: {}", 
+                    kafkaBrokers, kafkaTopic, consumerGroup);
+            
+            // Build the KafkaSource with enhanced error handling
+            KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
+                    .setBootstrapServers(kafkaBrokers)
+                    .setTopics(kafkaTopic)
+                    .setGroupId(consumerGroup)
+                    .setStartingOffsets(OffsetsInitializer.latest())
+                    .setValueOnlyDeserializer(new SimpleStringSchema())
+                    .setProperties(kafkaProperties)
+                    .build();
+            
+            log.info("Kafka source created successfully with enhanced error handling");
+            return kafkaSource;
+            
+        } catch (KafkaException e) {
+            log.error("Failed to create Kafka source due to connectivity issues: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error creating Kafka source", e);
+            throw new KafkaException("Failed to create Kafka source", e);
+        }
     }
     
     /**
@@ -63,33 +83,133 @@ public class KafkaMessageSource {
      * @param offsetsInitializer Strategy for initializing offsets (earliest, latest, specific offsets, etc.)
      * @return Configured KafkaSource<String> with custom offset initialization
      * @throws IllegalArgumentException if required Kafka configuration is missing or invalid
+     * @throws KafkaException if broker connectivity or topic validation fails
      */
     public static KafkaSource<String> createSource(OffsetsInitializer offsetsInitializer) {
         log.info("Creating Kafka source with custom offset initializer...");
         
-        // Validate configuration first
-        KafkaConfiguration.validateConfiguration();
+        try {
+            // Validate configuration first
+            KafkaConfiguration.validateConfiguration();
+            
+            // Get configuration values
+            String kafkaBrokers = KafkaConfiguration.getKafkaBrokers();
+            String kafkaTopic = KafkaConfiguration.getKafkaTopic();
+            String consumerGroup = KafkaConfiguration.getConsumerGroup();
+            Properties kafkaProperties = KafkaConfiguration.getKafkaConsumerProperties();
+            
+            // Add resilience and error handling properties
+            enhancePropertiesForResilience(kafkaProperties);
+            
+            // Add consumer group coordination and monitoring properties
+            enhancePropertiesForCoordination(kafkaProperties);
+            
+            log.info("Configuring Kafka source with brokers: {}, topic: {}, consumer group: {}", 
+                    kafkaBrokers, kafkaTopic, consumerGroup);
+            
+            // Build the KafkaSource with custom offset initializer and enhanced error handling
+            KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
+                    .setBootstrapServers(kafkaBrokers)
+                    .setTopics(kafkaTopic)
+                    .setGroupId(consumerGroup)
+                    .setStartingOffsets(offsetsInitializer)
+                    .setValueOnlyDeserializer(new SimpleStringSchema())
+                    .setProperties(kafkaProperties)
+                    .build();
+            
+            log.info("Kafka source created successfully with custom offset initializer and enhanced error handling");
+            return kafkaSource;
+            
+        } catch (KafkaException e) {
+            log.error("Failed to create Kafka source due to connectivity issues: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error creating Kafka source with custom offset initializer", e);
+            throw new KafkaException("Failed to create Kafka source", e);
+        }
+    }
+
+    /**
+     * Enhances Kafka consumer properties with resilience and error handling configurations.
+     * Sets retry policies, timeouts, and other properties for robust operation.
+     * 
+     * @param properties Properties object to enhance (modified in place)
+     */
+    private static void enhancePropertiesForResilience(Properties properties) {
+        log.debug("Enhancing Kafka properties for resilience...");
         
-        // Get configuration values
-        String kafkaBrokers = KafkaConfiguration.getKafkaBrokers();
-        String kafkaTopic = KafkaConfiguration.getKafkaTopic();
-        String consumerGroup = KafkaConfiguration.getConsumerGroup();
-        Properties kafkaProperties = KafkaConfiguration.getKafkaConsumerProperties();
+        // Connection and retry settings (only set if not already configured)
+        setPropertyIfNotExists(properties, "reconnect.backoff.ms", "1000"); // 1 second initial backoff
+        setPropertyIfNotExists(properties, "reconnect.backoff.max.ms", "32000"); // 32 second max backoff
+        setPropertyIfNotExists(properties, "retry.backoff.ms", "1000"); // 1 second retry backoff
+        setPropertyIfNotExists(properties, "request.timeout.ms", "30000"); // 30 second request timeout
+        setPropertyIfNotExists(properties, "connections.max.idle.ms", "300000"); // 5 minute idle timeout
         
-        log.info("Configuring Kafka source with brokers: {}, topic: {}, consumer group: {}", 
-                kafkaBrokers, kafkaTopic, consumerGroup);
+        // Session and heartbeat settings for consumer group coordination
+        setPropertyIfNotExists(properties, "session.timeout.ms", "30000"); // 30 second session timeout
+        setPropertyIfNotExists(properties, "heartbeat.interval.ms", "10000"); // 10 second heartbeat interval
+        setPropertyIfNotExists(properties, "max.poll.interval.ms", "300000"); // 5 minute max poll interval
         
-        // Build the KafkaSource with custom offset initializer
-        KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
-                .setBootstrapServers(kafkaBrokers)
-                .setTopics(kafkaTopic)
-                .setGroupId(consumerGroup)
-                .setStartingOffsets(offsetsInitializer)
-                .setValueOnlyDeserializer(new SimpleStringSchema())
-                .setProperties(kafkaProperties)
-                .build();
+        // Offset commit settings for graceful shutdown
+        setPropertyIfNotExists(properties, "enable.auto.commit", "true"); // Enable auto commit
+        setPropertyIfNotExists(properties, "auto.commit.interval.ms", "5000"); // 5 second commit interval
         
-        log.info("Kafka source created successfully with custom offset initializer");
-        return kafkaSource;
+        // Fetch settings for performance and reliability
+        setPropertyIfNotExists(properties, "fetch.min.bytes", "1"); // Minimum fetch size
+        setPropertyIfNotExists(properties, "fetch.max.wait.ms", "500"); // Maximum wait time for fetch
+        
+        // Error handling settings
+        setPropertyIfNotExists(properties, "retries", "3"); // Number of retries for transient errors
+        
+        log.debug("Kafka properties enhanced for resilience");
+    }
+
+    /**
+     * Enhances Kafka consumer properties with consumer group coordination and monitoring configurations.
+     * Sets properties for rebalancing behavior, offset management, and monitoring.
+     * 
+     * @param properties Properties object to enhance (modified in place)
+     */
+    private static void enhancePropertiesForCoordination(Properties properties) {
+        log.debug("Enhancing Kafka properties for consumer group coordination...");
+        
+        // Consumer group coordination settings
+        setPropertyIfNotExists(properties, "partition.assignment.strategy", 
+            "org.apache.kafka.clients.consumer.RangeAssignor,org.apache.kafka.clients.consumer.CooperativeStickyAssignor");
+        
+        // Rebalancing behavior settings
+        setPropertyIfNotExists(properties, "max.poll.records", "500"); // Limit records per poll to avoid rebalancing
+        setPropertyIfNotExists(properties, "session.timeout.ms", "30000"); // 30 second session timeout
+        setPropertyIfNotExists(properties, "heartbeat.interval.ms", "10000"); // 10 second heartbeat interval
+        
+        // Offset management settings for better coordination
+        setPropertyIfNotExists(properties, "auto.offset.reset", "latest"); // Start from latest if no committed offset
+        setPropertyIfNotExists(properties, "enable.auto.commit", "true"); // Enable automatic offset commits
+        setPropertyIfNotExists(properties, "auto.commit.interval.ms", "5000"); // Commit every 5 seconds
+        
+        // Consumer group metadata settings
+        setPropertyIfNotExists(properties, "group.instance.id", null); // Use dynamic membership by default
+        
+        // Monitoring and logging settings
+        setPropertyIfNotExists(properties, "client.id", "backpack-tf-flink-consumer"); // Client identifier for monitoring
+        
+        log.debug("Kafka properties enhanced for consumer group coordination");
+    }
+
+    /**
+     * Sets a property value only if it doesn't already exist in the properties.
+     * This allows user-configured values to take precedence over defaults.
+     * 
+     * @param properties Properties object to modify
+     * @param key Property key
+     * @param defaultValue Default value to set if key doesn't exist
+     */
+    private static void setPropertyIfNotExists(Properties properties, String key, String defaultValue) {
+        if (!properties.containsKey(key)) {
+            properties.setProperty(key, defaultValue);
+            log.trace("Set default Kafka property: {} = {}", key, defaultValue);
+        } else {
+            log.trace("Using existing Kafka property: {} = {}", key, properties.getProperty(key));
+        }
     }
 }

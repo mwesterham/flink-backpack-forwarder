@@ -1,8 +1,18 @@
 package me.matthew.flink.backpacktfforward.config;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
+import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 
+import java.time.Duration;
+import java.util.Collections;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Utility class for managing Kafka configuration from environment variables.
@@ -90,7 +100,9 @@ public class KafkaConfiguration {
 
     /**
      * Validates that all required Kafka configuration is present and valid.
+     * Also validates broker connectivity and topic existence.
      * @throws IllegalArgumentException if any required configuration is missing or invalid
+     * @throws KafkaException if broker connectivity or topic validation fails
      */
     public static void validateConfiguration() {
         log.info("Validating Kafka configuration...");
@@ -115,9 +127,99 @@ public class KafkaConfiguration {
                 );
             }
             
+            // Validate broker connectivity and topic existence
+            validateBrokerConnectivity(brokers);
+            validateTopicExists(brokers, topic);
+            
         } catch (IllegalArgumentException e) {
             log.error("Kafka configuration validation failed: {}", e.getMessage());
             throw e;
+        } catch (Exception e) {
+            log.error("Kafka connectivity validation failed: {}", e.getMessage());
+            throw new KafkaException("Failed to validate Kafka connectivity", e);
+        }
+    }
+
+    /**
+     * Validates that the Kafka brokers are reachable and responsive.
+     * @param brokers Comma-separated list of broker addresses
+     * @throws KafkaException if brokers are not reachable within timeout
+     */
+    private static void validateBrokerConnectivity(String brokers) {
+        log.info("Validating broker connectivity to: {}", brokers);
+        
+        Properties adminProps = new Properties();
+        adminProps.put("bootstrap.servers", brokers);
+        adminProps.put("request.timeout.ms", "10000"); // 10 second timeout
+        adminProps.put("connections.max.idle.ms", "5000"); // 5 second idle timeout
+        
+        try (AdminClient adminClient = AdminClient.create(adminProps)) {
+            // Try to get cluster metadata to verify connectivity
+            var clusterMetadata = adminClient.describeCluster();
+            var clusterId = clusterMetadata.clusterId().get(10, TimeUnit.SECONDS);
+            log.info("Successfully connected to Kafka cluster: {}", clusterId);
+            
+        } catch (TimeoutException e) {
+            String errorMsg = String.format("Timeout connecting to Kafka brokers: %s. " +
+                "Please verify broker addresses and network connectivity.", brokers);
+            log.error(errorMsg);
+            throw new KafkaException(errorMsg, e);
+            
+        } catch (ExecutionException e) {
+            String errorMsg = String.format("Failed to connect to Kafka brokers: %s. " +
+                "Error: %s", brokers, e.getCause().getMessage());
+            log.error(errorMsg);
+            throw new KafkaException(errorMsg, e.getCause());
+            
+        } catch (Exception e) {
+            String errorMsg = String.format("Unexpected error connecting to Kafka brokers: %s", brokers);
+            log.error(errorMsg, e);
+            throw new KafkaException(errorMsg, e);
+        }
+    }
+
+    /**
+     * Validates that the specified Kafka topic exists and is accessible.
+     * @param brokers Comma-separated list of broker addresses
+     * @param topic Topic name to validate
+     * @throws KafkaException if topic does not exist or is not accessible
+     */
+    private static void validateTopicExists(String brokers, String topic) {
+        log.info("Validating topic existence: {}", topic);
+        
+        Properties adminProps = new Properties();
+        adminProps.put("bootstrap.servers", brokers);
+        adminProps.put("request.timeout.ms", "10000"); // 10 second timeout
+        
+        try (AdminClient adminClient = AdminClient.create(adminProps)) {
+            DescribeTopicsResult topicsResult = adminClient.describeTopics(Collections.singletonList(topic));
+            TopicDescription topicDescription = topicsResult.values().get(topic).get(10, TimeUnit.SECONDS);
+            
+            int partitionCount = topicDescription.partitions().size();
+            log.info("Topic '{}' exists with {} partitions", topic, partitionCount);
+            
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof UnknownTopicOrPartitionException) {
+                String errorMsg = String.format("Kafka topic '%s' does not exist. " +
+                    "Please create the topic before starting the application.", topic);
+                log.error(errorMsg);
+                throw new KafkaException(errorMsg, e.getCause());
+            } else {
+                String errorMsg = String.format("Failed to validate topic '%s': %s", topic, e.getCause().getMessage());
+                log.error(errorMsg);
+                throw new KafkaException(errorMsg, e.getCause());
+            }
+            
+        } catch (TimeoutException e) {
+            String errorMsg = String.format("Timeout validating topic '%s'. " +
+                "Please verify topic exists and broker connectivity.", topic);
+            log.error(errorMsg);
+            throw new KafkaException(errorMsg, e);
+            
+        } catch (Exception e) {
+            String errorMsg = String.format("Unexpected error validating topic '%s'", topic);
+            log.error(errorMsg, e);
+            throw new KafkaException(errorMsg, e);
         }
     }
 

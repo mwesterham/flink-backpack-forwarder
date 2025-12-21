@@ -14,6 +14,7 @@ import java.util.List;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.KAFKA_MESSAGES_PARSED_FAILED;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.KAFKA_MESSAGES_PARSED_SUCCESS;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.KAFKA_MESSAGES_CONSUMED;
 
 /**
  * Parses Kafka messages containing WebSocket data and extracts ListingUpdate objects.
@@ -25,6 +26,7 @@ public class KafkaMessageParser extends RichFlatMapFunction<String, ListingUpdat
     private transient ObjectMapper objectMapper;
     private transient Counter successfulParses;
     private transient Counter failedParses;
+    private transient Counter messagesConsumed;
     
     @Override
     public void open(Configuration parameters) throws Exception {
@@ -41,10 +43,17 @@ public class KafkaMessageParser extends RichFlatMapFunction<String, ListingUpdat
         this.failedParses = getRuntimeContext()
                 .getMetricGroup()
                 .counter(KAFKA_MESSAGES_PARSED_FAILED);
+                
+        this.messagesConsumed = getRuntimeContext()
+                .getMetricGroup()
+                .counter(KAFKA_MESSAGES_CONSUMED);
     }
     
     @Override
     public void flatMap(String kafkaMessageValue, Collector<ListingUpdate> out) throws Exception {
+        // Record that we consumed a message from Kafka
+        messagesConsumed.inc();
+        
         try {
             // Parse the Kafka message wrapper
             KafkaMessageWrapper wrapper = objectMapper.readValue(kafkaMessageValue, KafkaMessageWrapper.class);
