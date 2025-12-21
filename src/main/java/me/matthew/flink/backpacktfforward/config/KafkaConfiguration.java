@@ -26,6 +26,9 @@ public class KafkaConfiguration {
     private static final String KAFKA_TOPIC_ENV = "KAFKA_TOPIC";
     private static final String KAFKA_CONSUMER_GROUP_ENV = "KAFKA_CONSUMER_GROUP";
     
+    // Optional environment variables
+    private static final String KAFKA_START_TIMESTAMP_ENV = "KAFKA_START_TIMESTAMP";
+    
     // Prefix for additional Kafka consumer properties
     private static final String KAFKA_CONSUMER_PREFIX = "KAFKA_CONSUMER_";
 
@@ -72,6 +75,27 @@ public class KafkaConfiguration {
             );
         }
         return consumerGroup.trim();
+    }
+
+    /**
+     * Reads Kafka start timestamp from environment variable if set.
+     * @return Optional timestamp in milliseconds, or null if not set
+     * @throws IllegalArgumentException if KAFKA_START_TIMESTAMP is set but not a valid number
+     */
+    public static Long getStartTimestamp() {
+        String timestampStr = System.getenv(KAFKA_START_TIMESTAMP_ENV);
+        if (timestampStr == null || timestampStr.trim().isEmpty()) {
+            return null;
+        }
+        
+        try {
+            return Long.parseLong(timestampStr.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                String.format("Environment variable %s must be a valid timestamp in milliseconds, got: %s", 
+                    KAFKA_START_TIMESTAMP_ENV, timestampStr), e
+            );
+        }
     }
 
     /**

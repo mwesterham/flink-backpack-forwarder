@@ -8,6 +8,7 @@ import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.kafka.common.KafkaException;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Properties;
 
 /**
@@ -24,7 +25,7 @@ public class KafkaMessageSource {
      * - String deserialization for Kafka message values
      * - Consumer group and topic subscription from environment variables
      * - Additional consumer properties from KAFKA_CONSUMER_* environment variables
-     * - Automatic offset initialization (latest for new consumer groups)
+     * - Automatic offset initialization (latest for new consumer groups, or from KAFKA_START_TIMESTAMP if set)
      * - Retry policies for broker connectivity issues
      * - Graceful shutdown with proper offset commits
      * 
@@ -36,36 +37,17 @@ public class KafkaMessageSource {
         log.info("Creating Kafka source...");
         
         try {
-            // Validate configuration first - this will throw if anything is missing or unreachable
-            KafkaConfiguration.validateConfiguration();
+            // Check if start timestamp is configured
+            Long startTimestamp = KafkaConfiguration.getStartTimestamp();
             
-            // Get configuration values
-            String kafkaBrokers = KafkaConfiguration.getKafkaBrokers();
-            String kafkaTopic = KafkaConfiguration.getKafkaTopic();
-            String consumerGroup = KafkaConfiguration.getConsumerGroup();
-            Properties kafkaProperties = KafkaConfiguration.getKafkaConsumerProperties();
-            
-            // Add resilience and error handling properties
-            enhancePropertiesForResilience(kafkaProperties);
-            
-            // Add consumer group coordination and monitoring properties
-            enhancePropertiesForCoordination(kafkaProperties);
-            
-            log.info("Configuring Kafka source with brokers: {}, topic: {}, consumer group: {}", 
-                    kafkaBrokers, kafkaTopic, consumerGroup);
-            
-            // Build the KafkaSource with enhanced error handling
-            KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
-                    .setBootstrapServers(kafkaBrokers)
-                    .setTopics(kafkaTopic)
-                    .setGroupId(consumerGroup)
-                    .setStartingOffsets(OffsetsInitializer.latest())
-                    .setValueOnlyDeserializer(new SimpleStringSchema())
-                    .setProperties(kafkaProperties)
-                    .build();
-            
-            log.info("Kafka source created successfully with enhanced error handling");
-            return kafkaSource;
+            if (startTimestamp != null) {
+                log.info("Using configured start timestamp: {} ({})", 
+                        startTimestamp, Instant.ofEpochMilli(startTimestamp));
+                return createSourceFromTimestamp(startTimestamp);
+            } else {
+                log.info("No start timestamp configured, using latest offset");
+                return createSourceWithLatestOffset();
+            }
             
         } catch (KafkaException e) {
             log.error("Failed to create Kafka source due to connectivity issues: {}", e.getMessage());
@@ -76,6 +58,51 @@ public class KafkaMessageSource {
         }
     }
     
+    /**
+     * Creates a configured KafkaSource instance starting from latest offset.
+     * This is the original behavior extracted into a separate method.
+     * 
+     * @return Configured KafkaSource<String> starting from latest offset
+     * @throws IllegalArgumentException if required Kafka configuration is missing or invalid
+     * @throws KafkaException if broker connectivity or topic validation fails
+     */
+    public static KafkaSource<String> createSourceWithLatestOffset() {
+        log.info("Creating Kafka source with latest offset...");
+        
+        return createSource(OffsetsInitializer.latest());
+    }
+    
+    /**
+     * Creates a configured KafkaSource instance starting from a specific timestamp.
+     * The source will start consuming from the first message at or after the specified timestamp.
+     * 
+     * @param startTimestamp Unix timestamp in milliseconds to start consuming from
+     * @return Configured KafkaSource<String> starting from the specified timestamp
+     * @throws IllegalArgumentException if required Kafka configuration is missing or invalid
+     * @throws KafkaException if broker connectivity or topic validation fails
+     */
+    public static KafkaSource<String> createSourceFromTimestamp(long startTimestamp) {
+        log.info("Creating Kafka source starting from timestamp: {} ({})", 
+                startTimestamp, Instant.ofEpochMilli(startTimestamp));
+        
+        return createSource(OffsetsInitializer.timestamp(startTimestamp));
+    }
+    
+    /**
+     * Creates a configured KafkaSource instance starting from a specific timestamp.
+     * The source will start consuming from the first message at or after the specified timestamp.
+     * 
+     * @param startTimestamp Instant representing the timestamp to start consuming from
+     * @return Configured KafkaSource<String> starting from the specified timestamp
+     * @throws IllegalArgumentException if required Kafka configuration is missing or invalid
+     * @throws KafkaException if broker connectivity or topic validation fails
+     */
+    public static KafkaSource<String> createSourceFromTimestamp(Instant startTimestamp) {
+        log.info("Creating Kafka source starting from timestamp: {}", startTimestamp);
+        
+        return createSource(OffsetsInitializer.timestamp(startTimestamp.toEpochMilli()));
+    }
+
     /**
      * Creates a configured KafkaSource instance with custom offset initialization.
      * Allows specifying how to initialize offsets for new consumer groups.
