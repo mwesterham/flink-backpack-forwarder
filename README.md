@@ -39,7 +39,7 @@ This application consumes messages from Kafka instead of directly from WebSocket
 #### Required Environment Variables
 
 - `KAFKA_BROKERS`: Comma-separated list of Kafka broker addresses (e.g., "localhost:9092" or "broker1:9092,broker2:9092")
-- `KAFKA_TOPIC`: Name of the Kafka topic to consume from (e.g., "backpack-tf-listings")
+- `KAFKA_TOPIC`: Name of the Kafka topic to consume from (e.g., "backpack-tf-relay-egress-queue-topic")
 - `KAFKA_CONSUMER_GROUP`: Consumer group ID for offset management (e.g., "flink-backpack-tf-consumer")
 
 #### Optional Kafka Consumer Properties
@@ -56,7 +56,7 @@ Additional Kafka consumer properties can be set using environment variables with
 ```bash
 # Basic configuration
 export KAFKA_BROKERS="localhost:9092"
-export KAFKA_TOPIC="backpack-tf-listings"
+export KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic"
 export KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer"
 
 # Optional consumer properties
@@ -199,8 +199,8 @@ start-cluster.sh
 ```
 mvn clean package && \
 KAFKA_BROKERS="localhost:9092" \
-KAFKA_TOPIC="backpack-tf-listings" \
-KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer" \
+KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
+KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
 DB_URL="jdbc:postgresql://localhost:5432/testdb" \
 DB_USERNAME="testuser" \
 DB_PASSWORD="testpass" \

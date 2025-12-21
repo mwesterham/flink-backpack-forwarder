@@ -188,7 +188,8 @@ public class KafkaMessageSource {
         setPropertyIfNotExists(properties, "auto.commit.interval.ms", "5000"); // Commit every 5 seconds
         
         // Consumer group metadata settings
-        setPropertyIfNotExists(properties, "group.instance.id", null); // Use dynamic membership by default
+        // Note: group.instance.id is not set by default to use dynamic membership
+        // If static membership is needed, set KAFKA_CONSUMER_GROUP_INSTANCE_ID environment variable
         
         // Monitoring and logging settings
         setPropertyIfNotExists(properties, "client.id", "backpack-tf-flink-consumer"); // Client identifier for monitoring
