@@ -85,7 +85,7 @@ public class WebSocketForwarderJob {
                 // Create backfill Kafka source with error handling
                 KafkaSource<String> backfillKafkaSource;
                 try {
-                    backfillKafkaSource = BackfillRequestSource.createBackfillKafkaSource();
+                    backfillKafkaSource = BackfillRequestSource.createKafkaSource();
                 } catch (Exception e) {
                     log.error("Failed to create backfill Kafka source: {}. Backfill functionality will be disabled.", e.getMessage(), e);
                     throw new IllegalStateException("Backfill Kafka source creation failed", e);

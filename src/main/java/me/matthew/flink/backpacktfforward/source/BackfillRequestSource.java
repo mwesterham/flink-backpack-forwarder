@@ -2,89 +2,26 @@ package me.matthew.flink.backpacktfforward.source;
 
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.config.KafkaConfiguration;
-import me.matthew.flink.backpacktfforward.model.BackfillRequest;
-import me.matthew.flink.backpacktfforward.parser.BackfillMessageParser;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-import org.apache.flink.util.Collector;
 import org.apache.kafka.common.KafkaException;
 
 import java.util.Properties;
 
 /**
- * Flink source function that consumes backfill request messages from Kafka.
- * Uses existing KafkaConfiguration patterns and emits BackfillRequest objects for processing.
+ * Factory class for creating Kafka sources for backfill request messages.
+ * Uses existing KafkaConfiguration patterns and provides configured KafkaSource instances.
  * Follows the same patterns as existing Kafka sources in the codebase.
  */
 @Slf4j
-public class BackfillRequestSource extends RichSourceFunction<BackfillRequest> {
+public class BackfillRequestSource {
     
     private static final String BACKFILL_KAFKA_TOPIC_ENV = "BACKFILL_KAFKA_TOPIC";
     private static final String BACKFILL_KAFKA_CONSUMER_GROUP_ENV = "BACKFILL_KAFKA_CONSUMER_GROUP";
     
-    private volatile boolean isRunning = true;
-    private transient BackfillMessageParser parser;
-    
-    @Override
-    public void open(Configuration parameters) throws Exception {
-        super.open(parameters);
-        
-        // Initialize the parser with the same runtime context
-        this.parser = new BackfillMessageParser();
-        this.parser.setRuntimeContext(getRuntimeContext());
-        this.parser.open(parameters);
-        
-        log.info("BackfillRequestSource initialized");
-    }
-    
-    @Override
-    public void run(SourceContext<BackfillRequest> ctx) throws Exception {
-        log.info("Starting backfill request consumption from Kafka...");
-        
-        try {
-            // Validate backfill-specific configuration
-            validateBackfillConfiguration();
-            
-            // Create Kafka source using existing patterns
-            KafkaSource<String> kafkaSource = createBackfillKafkaSource();
-            
-            // Note: This is a simplified implementation for demonstration
-            // In a real Flink job, you would typically use the KafkaSource directly
-            // in the streaming environment rather than wrapping it in a RichSourceFunction
-            log.info("Backfill Kafka source created successfully");
-            
-            // For this implementation, we'll emit a placeholder to show the structure
-            // The actual consumption would be handled by integrating the KafkaSource
-            // directly into the WebSocketForwarderJob streaming environment
-            while (isRunning) {
-                // This is where Kafka consumption would happen
-                // In practice, this source would be replaced by direct KafkaSource usage
-                Thread.sleep(1000);
-            }
-            
-        } catch (Exception e) {
-            log.error("Error in backfill request source", e);
-            throw e;
-        }
-    }
-    
-    @Override
-    public void cancel() {
-        log.info("Cancelling backfill request source...");
-        this.isRunning = false;
-    }
-    
-    @Override
-    public void close() throws Exception {
-        if (parser != null) {
-            parser.close();
-        }
-        super.close();
-        log.info("BackfillRequestSource closed");
+    // Private constructor to prevent instantiation
+    private BackfillRequestSource() {
     }
     
     /**
@@ -95,7 +32,7 @@ public class BackfillRequestSource extends RichSourceFunction<BackfillRequest> {
      * @throws IllegalArgumentException if required configuration is missing
      * @throws KafkaException if Kafka connectivity fails
      */
-    public static KafkaSource<String> createBackfillKafkaSource() {
+    public static KafkaSource<String> createKafkaSource() {
         log.info("Creating backfill Kafka source...");
         
         try {
@@ -166,7 +103,7 @@ public class BackfillRequestSource extends RichSourceFunction<BackfillRequest> {
      * Validates that all required backfill configuration is present.
      * @throws IllegalArgumentException if any required configuration is missing
      */
-    private void validateBackfillConfiguration() {
+    public static void validateConfiguration() {
         log.info("Validating backfill configuration...");
         
         try {
