@@ -82,14 +82,20 @@ public class WebSocketForwarderJob {
             try {
                 log.info("Backfill configuration validated, enabling backfill functionality");
                 
-                // Create backfill Kafka source
-                KafkaSource<String> backfillKafkaSource = BackfillRequestSource.createBackfillKafkaSource();
+                // Create backfill Kafka source with error handling
+                KafkaSource<String> backfillKafkaSource;
+                try {
+                    backfillKafkaSource = BackfillRequestSource.createBackfillKafkaSource();
+                } catch (Exception e) {
+                    log.error("Failed to create backfill Kafka source: {}. Backfill functionality will be disabled.", e.getMessage(), e);
+                    throw new IllegalStateException("Backfill Kafka source creation failed", e);
+                }
                 
                 DataStreamSource<String> backfillSource = env.fromSource(backfillKafkaSource,
                         org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(),
                         "BackpackTFBackfillKafkaSource");
                 
-                // Parse backfill messages to BackfillRequest objects
+                // Parse backfill messages to BackfillRequest objects with error handling
                 var backfillRequests = backfillSource
                         .flatMap(new BackfillMessageParser())
                         .returns(BackfillRequest.class)
@@ -99,16 +105,26 @@ public class WebSocketForwarderJob {
                 var backfillRequestsWithMetrics = BackfillSourceWithMetrics.addMetrics(backfillRequests)
                         .name("BackpackTFBackfillSourceWithMetrics");
                 
-                // Process backfill requests through BackfillProcessor
-                backfillStream = backfillRequestsWithMetrics
-                        .flatMap(new BackfillProcessor(dbUrl, dbUser, dbPass))
-                        .returns(ListingUpdate.class)
-                        .name("BackpackTFBackfillProcessor");
+                // Process backfill requests through BackfillProcessor with error handling
+                try {
+                    backfillStream = backfillRequestsWithMetrics
+                            .flatMap(new BackfillProcessor(dbUrl, dbUser, dbPass))
+                            .returns(ListingUpdate.class)
+                            .name("BackpackTFBackfillProcessor");
+                } catch (Exception e) {
+                    log.error("Failed to create BackfillProcessor: {}. Backfill functionality will be disabled.", e.getMessage(), e);
+                    throw new IllegalStateException("BackfillProcessor creation failed", e);
+                }
                 
                 log.info("Backfill source and processor configured successfully");
             } catch (Exception e) {
-                log.error("Failed to initialize backfill functionality: {}", e.getMessage(), e);
-                throw new IllegalStateException("Backfill initialization failed", e);
+                log.error("Failed to initialize backfill functionality: {}. " +
+                         "The job will continue with Kafka-only functionality.", e.getMessage(), e);
+                
+                // Decide whether to fail the job or continue without backfill
+                // For resilience, we'll continue without backfill rather than failing the entire job
+                log.warn("Continuing job execution without backfill functionality due to initialization failure");
+                backfillStream = null;
             }
         }
 

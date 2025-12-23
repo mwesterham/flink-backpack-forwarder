@@ -53,9 +53,36 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
             messagesConsumed.inc();
         }
         
+        // Validate input
+        if (kafkaMessageValue == null) {
+            log.error("Received null Kafka message value, skipping");
+            if (failedParses != null) {
+                failedParses.inc();
+            }
+            return;
+        }
+        
+        if (kafkaMessageValue.trim().isEmpty()) {
+            log.error("Received empty Kafka message value, skipping");
+            if (failedParses != null) {
+                failedParses.inc();
+            }
+            return;
+        }
+        
         try {
             // Parse the Kafka message wrapper
-            BackfillKafkaMessage wrapper = objectMapper.readValue(kafkaMessageValue, BackfillKafkaMessage.class);
+            BackfillKafkaMessage wrapper;
+            try {
+                wrapper = objectMapper.readValue(kafkaMessageValue, BackfillKafkaMessage.class);
+            } catch (Exception jsonException) {
+                log.error("Failed to parse JSON from Kafka message. Error = {}, Raw message = {}", 
+                         jsonException.getMessage(), kafkaMessageValue, jsonException);
+                if (failedParses != null) {
+                    failedParses.inc();
+                }
+                return;
+            }
             
             if (wrapper == null) {
                 log.error("Parsed backfill Kafka message wrapper is null. Raw message = {}", kafkaMessageValue);
@@ -75,9 +102,9 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
             
             BackfillRequest request = wrapper.getData();
             
-            // Validate required fields
+            // Validate required fields with detailed error messages
             if (request.getItemDefindex() <= 0) {
-                log.error("Invalid item_defindex in backfill request: {}. Raw message = {}", 
+                log.error("Invalid item_defindex in backfill request: {}. Must be positive integer. Raw message = {}", 
                          request.getItemDefindex(), kafkaMessageValue);
                 if (failedParses != null) {
                     failedParses.inc();
@@ -86,7 +113,7 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
             }
             
             if (request.getItemQualityId() <= 0) {
-                log.error("Invalid item_quality_id in backfill request: {}. Raw message = {}", 
+                log.error("Invalid item_quality_id in backfill request: {}. Must be positive integer. Raw message = {}", 
                          request.getItemQualityId(), kafkaMessageValue);
                 if (failedParses != null) {
                     failedParses.inc();
@@ -100,12 +127,16 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
                 successfulParses.inc();
             }
             
+            log.debug("Successfully parsed backfill request: item_defindex={}, item_quality_id={}", 
+                     request.getItemDefindex(), request.getItemQualityId());
+            
         } catch (Exception e) {
-            log.error("Failed to parse backfill Kafka message. Error = {}, Raw message = {}", 
+            log.error("Unexpected error parsing backfill Kafka message. Error = {}, Raw message = {}", 
                      e.getMessage(), kafkaMessageValue, e);
             if (failedParses != null) {
                 failedParses.inc();
             }
+            // Don't rethrow - continue processing other messages
         }
     }
 }
