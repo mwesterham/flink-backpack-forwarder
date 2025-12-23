@@ -1,19 +1,17 @@
 package me.matthew.flink.backpacktfforward.processor;
 
+import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
+import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 import me.matthew.flink.backpacktfforward.model.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
+import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -25,36 +23,19 @@ import java.util.UUID;
  * and emitting ListingUpdate events for both new/updated listings and stale data deletion.
  * 
  * This processor:
- * 1. Queries the database for market_name using item identifiers
+ * 1. Uses DatabaseHelper to query for market_name using item identifiers
  * 2. Calls the backpack.tf API to fetch current listings
  * 3. Maps API response to ListingUpdate objects
- * 4. Identifies stale listings and emits delete events
+ * 4. Uses DatabaseHelper to identify stale listings and emits delete events
  */
 @Slf4j
 public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, ListingUpdate> {
-    
-    private static final String MARKET_NAME_QUERY = """
-        SELECT DISTINCT market_name 
-        FROM listings 
-        WHERE item_defindex = ? AND item_quality_id = ? 
-        AND market_name IS NOT NULL 
-        ORDER BY updated_at DESC 
-        LIMIT 1
-        """;
-    
-    private static final String EXISTING_LISTINGS_QUERY = """
-        SELECT id, steamid 
-        FROM listings 
-        WHERE item_defindex = ? AND item_quality_id = ? AND is_deleted = false
-        """;
     
     private final String jdbcUrl;
     private final String username;
     private final String password;
     
-    private transient Connection connection;
-    private transient PreparedStatement marketNameStmt;
-    private transient PreparedStatement existingListingsStmt;
+    private transient DatabaseHelper databaseHelper;
     private transient BackpackTfApiClient apiClient;
     
     /**
@@ -74,19 +55,20 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
         
-        // Initialize database connection
-        Class.forName("org.postgresql.Driver");
-        connection = DriverManager.getConnection(jdbcUrl, username, password);
-        connection.setAutoCommit(true);
+        // Initialize retry policy using existing SqlRetryMetrics patterns
+        SqlRetryMetrics sqlRetryMetrics = new SqlRetryMetrics(
+                getRuntimeContext().getMetricGroup(),
+                "backfill_db_retries"
+        );
+        RetryPolicy<Object> retryPolicy = sqlRetryMetrics.deadlockRetryPolicy(5);
         
-        // Prepare SQL statements
-        marketNameStmt = connection.prepareStatement(MARKET_NAME_QUERY);
-        existingListingsStmt = connection.prepareStatement(EXISTING_LISTINGS_QUERY);
+        // Initialize database helper with existing connection patterns
+        databaseHelper = new DatabaseHelper(jdbcUrl, username, password, retryPolicy);
         
         // Initialize API client
         apiClient = new BackpackTfApiClient();
         
-        log.info("BackfillProcessor initialized with database connection");
+        log.info("BackfillProcessor initialized with DatabaseHelper and API client");
     }
     
     @Override
@@ -95,8 +77,8 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 request.getItemDefindex(), request.getItemQualityId());
         
         try {
-            // Step 1: Query database for market_name
-            String marketName = getMarketName(request.getItemDefindex(), request.getItemQualityId());
+            // Step 1: Query database for market_name using DatabaseHelper
+            String marketName = databaseHelper.getMarketName(request.getItemDefindex(), request.getItemQualityId());
             if (marketName == null) {
                 log.warn("No market_name found for item_defindex={}, item_quality_id={}", 
                         request.getItemDefindex(), request.getItemQualityId());
@@ -128,7 +110,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 apiSteamIds.add(apiListing.getSteamid());
             }
             
-            // Step 4: Handle stale data deletion
+            // Step 4: Handle stale data deletion using DatabaseHelper
             handleStaleDataDeletion(request.getItemDefindex(), request.getItemQualityId(), 
                     apiSteamIds, out);
             
@@ -140,56 +122,29 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
     }
     
     /**
-     * Queries the database for the market_name associated with the given item identifiers.
-     * 
-     * @param itemDefindex Item definition index
-     * @param itemQualityId Item quality ID
-     * @return Market name if found, null otherwise
-     * @throws SQLException if database query fails
-     */
-    private String getMarketName(int itemDefindex, int itemQualityId) throws SQLException {
-        marketNameStmt.setInt(1, itemDefindex);
-        marketNameStmt.setInt(2, itemQualityId);
-        
-        try (ResultSet rs = marketNameStmt.executeQuery()) {
-            if (rs.next()) {
-                return rs.getString("market_name");
-            }
-        }
-        
-        return null;
-    }
-    
-    /**
-     * Queries the database for existing listings with the same item identifiers
-     * and identifies stale listings that should be deleted.
+     * Queries existing listings using DatabaseHelper and identifies stale listings that should be deleted.
      * 
      * @param itemDefindex Item definition index
      * @param itemQualityId Item quality ID
      * @param apiSteamIds List of Steam IDs from the API response
      * @param out Collector to emit delete events
-     * @throws SQLException if database query fails
+     * @throws Exception if database query fails
      */
     private void handleStaleDataDeletion(int itemDefindex, int itemQualityId, 
-            List<String> apiSteamIds, Collector<ListingUpdate> out) throws SQLException {
+            List<String> apiSteamIds, Collector<ListingUpdate> out) throws Exception {
         
-        existingListingsStmt.setInt(1, itemDefindex);
-        existingListingsStmt.setInt(2, itemQualityId);
+        List<DatabaseHelper.ExistingListing> existingListings = 
+                databaseHelper.getExistingListings(itemDefindex, itemQualityId);
         
         Set<String> apiSteamIdSet = new HashSet<>(apiSteamIds);
         
-        try (ResultSet rs = existingListingsStmt.executeQuery()) {
-            while (rs.next()) {
-                String listingId = rs.getString("id");
-                String steamId = rs.getString("steamid");
-                
-                // If this listing's steamid is not in the API response, it's stale
-                if (!apiSteamIdSet.contains(steamId)) {
-                    ListingUpdate deleteEvent = createDeleteEvent(listingId, steamId);
-                    out.collect(deleteEvent);
-                    log.debug("Emitting delete event for stale listing: id={}, steamid={}", 
-                            listingId, steamId);
-                }
+        for (DatabaseHelper.ExistingListing existingListing : existingListings) {
+            // If this listing's steamid is not in the API response, it's stale
+            if (!apiSteamIdSet.contains(existingListing.getSteamid())) {
+                ListingUpdate deleteEvent = createDeleteEvent(existingListing.getId(), existingListing.getSteamid());
+                out.collect(deleteEvent);
+                log.debug("Emitting delete event for stale listing: id={}, steamid={}", 
+                        existingListing.getId(), existingListing.getSteamid());
             }
         }
     }
@@ -232,8 +187,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         ListingUpdate.Payload payload = new ListingUpdate.Payload();
         
         // Map basic listing information
-        payload.setId(generateListingId(apiListing.getSteamid(), apiListing.getItem().getDefindex(), 
-                apiListing.getItem().getQuality()));
+        payload.setId(apiListing.getId());
         payload.setSteamid(apiListing.getSteamid());
         payload.setAppid(440); // TF2 app ID
         payload.setIntent(apiListing.getIntent());
@@ -284,32 +238,9 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         return listingUpdate;
     }
     
-    /**
-     * Generates a consistent listing ID based on steamid and item identifiers.
-     * This ensures the same listing from the API gets the same ID across backfill runs.
-     * 
-     * @param steamid Steam ID of the listing owner
-     * @param defindex Item definition index
-     * @param quality Item quality ID
-     * @return Generated listing ID
-     */
-    private String generateListingId(String steamid, int defindex, int quality) {
-        // Create a deterministic ID based on steamid and item identifiers
-        // This ensures consistency across backfill runs
-        return String.format("api_%s_%d_%d_%d", steamid, defindex, quality, System.currentTimeMillis() / 1000);
-    }
-    
     @Override
     public void close() throws Exception {
-        if (marketNameStmt != null) {
-            marketNameStmt.close();
-        }
-        if (existingListingsStmt != null) {
-            existingListingsStmt.close();
-        }
-        if (connection != null) {
-            connection.close();
-        }
+        // DatabaseHelper manages its own connections, no cleanup needed
         super.close();
     }
 }
