@@ -236,6 +236,21 @@ DB_PASSWORD="testpass" \
 flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
+To enable backfill functionality, add the backfill environment variables:
+```
+mvn clean package && \
+KAFKA_BROKERS="localhost:9092" \
+KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
+KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
+BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests" \
+BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-test-consumer" \
+BACKPACK_TF_API_TOKEN="your-api-token-here" \
+DB_URL="jdbc:postgresql://localhost:5432/testdb" \
+DB_USERNAME="testuser" \
+DB_PASSWORD="testpass" \
+flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+```
+
 - Observe the job
 
 Go to http://localhost:8081 and to `Task Managers -> pick your task manager -> Logs`
@@ -282,8 +297,70 @@ curl http://localhost:9250/metrics | grep kafka_messages
 ```
 
 ```
+curl http://localhost:9250/metrics | grep backfill
+```
+
+```
 curl http://localhost:9250/metrics | grep records_lag_max
 ```
+
+### Backfill API Integration
+
+The application supports optional backfill functionality that fetches current market data from the backpack.tf snapshot API. This feature allows refreshing listing data for specific items and identifying stale listings that should be deleted.
+
+#### Backfill Environment Variables
+
+**Required for Backfill (all must be set to enable backfill):**
+- `BACKFILL_KAFKA_TOPIC`: Kafka topic for backfill requests (e.g., "backpack-tf-backfill-requests")
+- `BACKFILL_KAFKA_CONSUMER_GROUP`: Consumer group for backfill requests (e.g., "flink-backfill-consumer")
+- `BACKPACK_TF_API_TOKEN`: API token for backpack.tf snapshot API
+
+**Backfill Behavior:**
+- If any required backfill environment variable is missing, backfill functionality is disabled
+- The application will continue to work normally with only Kafka message processing
+- Backfill is completely optional and doesn't affect core functionality
+
+#### Example Backfill Configuration
+
+```bash
+# Enable backfill functionality (all three required)
+export BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests"
+export BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-consumer"
+export BACKPACK_TF_API_TOKEN="your-api-token-here"
+
+# Core application configuration (still required)
+export KAFKA_BROKERS="localhost:9092"
+export KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic"
+export KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer"
+export DB_URL="jdbc:postgresql://localhost:5432/testdb"
+export DB_USERNAME="testuser"
+export DB_PASSWORD="testpass"
+```
+
+#### Backfill Message Format
+
+Backfill requests should be sent to the backfill Kafka topic with the following JSON structure:
+
+```json
+{
+  "data": {
+    "itemDefindex": 463,
+    "itemQualityId": 5
+  },
+  "timestamp": "2024-01-01T12:00:00.000Z",
+  "messageId": "unique-backfill-request-id"
+}
+```
+
+#### Backfill Process Flow
+
+1. **Request Processing**: Consumes backfill requests from the dedicated Kafka topic
+2. **Database Query**: Looks up market_name for the item using item_defindex and item_quality_id
+3. **API Call**: Fetches current listings from backpack.tf snapshot API
+4. **Data Processing**: Maps API response to ListingUpdate events
+5. **Stale Detection**: Identifies database listings not present in API response
+6. **Event Emission**: Emits listing-update and listing-delete events through existing pipeline
+7. **Database Updates**: Uses existing ListingUpsertSink and ListingDeleteSink for persistence
 
 #### Available Metrics
 
@@ -292,6 +369,16 @@ curl http://localhost:9250/metrics | grep records_lag_max
 - `kafka_messages_parsed_success`: Successfully parsed messages  
 - `kafka_messages_parsed_failed`: Failed message parsing attempts
 - `incoming_events`: Total incoming events processed
+
+**Backfill Metrics:**
+- `backfill_requests_consumed`: Total backfill requests consumed
+- `backfill_requests_processed`: Successfully processed backfill requests
+- `backfill_requests_failed`: Failed backfill request processing attempts
+- `backfill_api_calls_success`: Successful API calls to backpack.tf
+- `backfill_api_calls_failed`: Failed API calls to backpack.tf
+- `backfill_api_call_latency`: API call latency timing
+- `backfill_stale_listings_detected`: Number of stale listings identified for deletion
+- `backfill_listings_updated`: Number of listings updated from API data
 
 **Flink's Built-in Kafka Metrics (automatically provided):**
 - `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max`: Maximum consumer lag across all partitions
