@@ -33,7 +33,8 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             user_banned, user_trade_offer_url, item_tradable, item_craftable,
             item_quality_color, item_particle_name, item_particle_type, bumped_at, is_deleted
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)
-        ON CONFLICT (id) DO UPDATE SET
+        ON CONFLICT (steamid, item_defindex, item_quality_id) DO UPDATE SET
+            id = EXCLUDED.id,
             steamid = EXCLUDED.steamid,
             item_defindex = EXCLUDED.item_defindex,
             item_quality_id = EXCLUDED.item_quality_id,
@@ -124,8 +125,10 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
         if (batch.isEmpty())
             return;
 
-        // Sort rows by PK to guarantee consistent lock order
-        batch.sort(Comparator.comparing(l -> l.getPayload().getId()));
+        // Sort rows by composite key (steamid, item_defindex, item_quality_id) to guarantee consistent lock order
+        batch.sort(Comparator.comparing((ListingUpdate l) -> l.getPayload().getSteamid())
+                .thenComparing(l -> l.getPayload().getItem().getDefindex())
+                .thenComparing(l -> l.getPayload().getItem().getQuality() != null ? l.getPayload().getItem().getQuality().getId() : 0));
 
         Failsafe.with(retryPolicy).run(() -> {
             try {

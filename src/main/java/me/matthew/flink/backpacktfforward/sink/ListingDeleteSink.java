@@ -26,7 +26,7 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
     private static final String MARK_DELETED_SQL = """
             UPDATE listings
             SET is_deleted = true, updated_at = now()
-            WHERE id = ?;
+            WHERE steamid = ? AND item_defindex = ? AND item_quality_id = ?;
             """;
 
     private final String jdbcUrl;
@@ -88,15 +88,20 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
     private void flushBatch() throws SQLException {
         if (batch.isEmpty()) return;
 
-        // Sort by ID to prevent deadlocks
-        batch.sort(Comparator.comparing(l -> l.getPayload().getId()));
+        // Sort by composite key (steamid, item_defindex, item_quality_id) to prevent deadlocks
+        batch.sort(Comparator.comparing((ListingUpdate l) -> l.getPayload().getSteamid())
+                .thenComparing(l -> l.getPayload().getItem().getDefindex())
+                .thenComparing(l -> l.getPayload().getItem().getQuality() != null ? l.getPayload().getItem().getQuality().getId() : 0));
 
         Failsafe.with(retryPolicy).run(() -> {
             try {
                 markDeletedStmt.clearBatch();
 
                 for (ListingUpdate lu : batch) {
-                    markDeletedStmt.setString(1, lu.getPayload().getId());
+                    var p = lu.getPayload();
+                    markDeletedStmt.setString(1, p.getSteamid());
+                    markDeletedStmt.setInt(2, p.getItem().getDefindex());
+                    markDeletedStmt.setObject(3, p.getItem().getQuality() != null ? p.getItem().getQuality().getId() : null, java.sql.Types.INTEGER);
                     markDeletedStmt.addBatch();
                     deleteCounter.inc();
                 }
