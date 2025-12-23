@@ -61,7 +61,8 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             item_particle_type = EXCLUDED.item_particle_type,
             bumped_at = EXCLUDED.bumped_at,
             is_deleted = false,
-            updated_at = now();
+            updated_at = now()
+        WHERE EXCLUDED.bumped_at >= listings.updated_at;
         """;
 
     private Connection connection;

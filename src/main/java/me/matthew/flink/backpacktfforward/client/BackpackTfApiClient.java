@@ -9,6 +9,8 @@ import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -150,9 +152,10 @@ public class BackpackTfApiClient {
     private BackpackTfApiResponse performApiCall(String sku, int appid) 
             throws IOException, InterruptedException, URISyntaxException {
         
-        // Build the request URL with parameters
+        // Build the request URL with parameters - URL encode the sku parameter
+        String encodedSku = URLEncoder.encode(sku, StandardCharsets.UTF_8);
         String url = String.format("%s?token=%s&sku=%s&appid=%d", 
-                API_BASE_URL, apiToken, sku, appid);
+                API_BASE_URL, apiToken, encodedSku, appid);
         
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI(url))

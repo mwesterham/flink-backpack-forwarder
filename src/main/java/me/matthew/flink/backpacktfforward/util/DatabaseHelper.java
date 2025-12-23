@@ -22,7 +22,7 @@ import java.util.List;
 public class DatabaseHelper {
     
     private static final String MARKET_NAME_QUERY = """
-        SELECT DISTINCT market_name 
+        SELECT market_name 
         FROM listings 
         WHERE item_defindex = ? AND item_quality_id = ? 
         AND market_name IS NOT NULL 

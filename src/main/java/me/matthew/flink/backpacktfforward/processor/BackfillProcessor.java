@@ -104,43 +104,22 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 apiResponse = apiClient.fetchSnapshot(marketName, 440);
             } catch (Exception e) {
                 log.error("API error while fetching snapshot for market_name={}, item_defindex={}, item_quality_id={}: {}. " +
-                         "Skipping API data processing but will still check for stale data deletion.", 
+                         "Skipping entire backfill request due to API failure.", 
                          marketName, request.getItemDefindex(), request.getItemQualityId(), e.getMessage(), e);
                 
-                // Even if API fails, we should still check for stale data deletion
-                try {
-                    handleStaleDataDeletion(request.getItemDefindex(), request.getItemQualityId(), 
-                            new ArrayList<>(), out);
-                } catch (Exception staleDataException) {
-                    log.error("Database error during stale data deletion after API failure for item_defindex={}, item_quality_id={}: {}",
-                             request.getItemDefindex(), request.getItemQualityId(), staleDataException.getMessage(), staleDataException);
-                }
+                // Complete no-op when API fails - skip both API processing and stale data deletion
                 return;
             }
             
             if (apiResponse == null) {
-                log.warn("API returned null response for market_name: {}. This may indicate an API issue.", marketName);
-                // Still check for stale data deletion
-                try {
-                    handleStaleDataDeletion(request.getItemDefindex(), request.getItemQualityId(), 
-                            new ArrayList<>(), out);
-                } catch (Exception staleDataException) {
-                    log.error("Database error during stale data deletion after null API response for item_defindex={}, item_quality_id={}: {}",
-                             request.getItemDefindex(), request.getItemQualityId(), staleDataException.getMessage(), staleDataException);
-                }
+                log.warn("API returned null response for market_name: {}. Skipping entire backfill request.", marketName);
+                // Complete no-op when API returns null
                 return;
             }
             
             if (apiResponse.getListings() == null || apiResponse.getListings().isEmpty()) {
-                log.info("No listings returned from API for market_name: {}. This may indicate no active listings.", marketName);
-                // Still need to check for stale data deletion
-                try {
-                    handleStaleDataDeletion(request.getItemDefindex(), request.getItemQualityId(), 
-                            new ArrayList<>(), out);
-                } catch (Exception staleDataException) {
-                    log.error("Database error during stale data deletion for empty API response, item_defindex={}, item_quality_id={}: {}",
-                             request.getItemDefindex(), request.getItemQualityId(), staleDataException.getMessage(), staleDataException);
-                }
+                log.info("No listings returned from API for market_name: {}. Skipping entire backfill request.", marketName);
+                // Complete no-op when no listings are returned
                 return;
             }
             
