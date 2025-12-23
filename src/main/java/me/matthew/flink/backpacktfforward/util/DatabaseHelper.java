@@ -36,6 +36,14 @@ public class DatabaseHelper {
         WHERE item_defindex = ? AND item_quality_id = ? AND is_deleted = false
         """;
     
+    private static final String LISTING_ID_BY_MARKET_STEAMID_QUERY = """
+        SELECT id 
+        FROM listings 
+        WHERE market_name = ? AND steamid = ? AND is_deleted = false
+        ORDER BY updated_at DESC 
+        LIMIT 1
+        """;
+    
     private final String jdbcUrl;
     private final String username;
     private final String password;
@@ -147,6 +155,41 @@ public class DatabaseHelper {
             log.debug("Found {} existing listings for item_defindex={}, item_quality_id={}", 
                     existingListings.size(), itemDefindex, itemQualityId);
             return existingListings;
+        });
+    }
+    
+    /**
+     * Queries the database for existing listing ID based on market_name and steamid combination.
+     * Returns the most recent listing ID if found, null if no matching listing exists.
+     * 
+     * @param marketName Market name of the item
+     * @param steamId Steam ID of the user
+     * @return Listing ID if found, null if no matching listing exists
+     * @throws SQLException if database query fails after retries
+     */
+    public String getExistingListingId(String marketName, String steamId) throws SQLException {
+        log.debug("Querying existing listing ID for market_name={}, steamid={}", marketName, steamId);
+        
+        return Failsafe.with(retryPolicy).get(() -> {
+            try (Connection connection = createConnection();
+                 PreparedStatement stmt = connection.prepareStatement(LISTING_ID_BY_MARKET_STEAMID_QUERY)) {
+                
+                stmt.setString(1, marketName);
+                stmt.setString(2, steamId);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        String listingId = rs.getString("id");
+                        log.debug("Found existing listing ID: {} for market_name={}, steamid={}", 
+                                listingId, marketName, steamId);
+                        return listingId;
+                    } else {
+                        log.debug("No existing listing ID found for market_name={}, steamid={}", 
+                                marketName, steamId);
+                        return null;
+                    }
+                }
+            }
         });
     }
     

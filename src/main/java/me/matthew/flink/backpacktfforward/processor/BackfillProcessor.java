@@ -289,8 +289,8 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
             ListingUpdate.Payload payload = new ListingUpdate.Payload();
             
             // Map basic listing information
-            // Generate a unique ID for the listing since API doesn't provide one
-            String listingId = generateListingId(apiListing, marketName);
+            // Try to get existing listing ID from database, generate if not found
+            String listingId = getOrGenerateListingId(apiListing, marketName);
             payload.setId(listingId);
             payload.setSteamid(apiListing.getSteamid());
             payload.setAppid(440); // TF2 app ID
@@ -352,6 +352,38 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
             log.error("Error mapping API listing to ListingUpdate for steamid={}, market_name={}: {}", 
                      apiListing.getSteamid(), marketName, e.getMessage(), e);
             throw new RuntimeException("Failed to map API listing to ListingUpdate", e);
+        }
+    }
+    
+    /**
+     * Gets the real listing ID from database by querying market_name/steamId combination,
+     * or generates a new one if it doesn't exist.
+     * 
+     * @param apiListing The API listing
+     * @param marketName The market name for the item
+     * @return Existing listing ID from database or generated ID if not found
+     */
+    private String getOrGenerateListingId(BackpackTfApiResponse.ApiListing apiListing, String marketName) {
+        try {
+            // First try to get existing listing ID from database
+            String existingId = databaseHelper.getExistingListingId(marketName, apiListing.getSteamid());
+            if (existingId != null) {
+                log.debug("Using existing listing ID: {} for market_name={}, steamid={}", 
+                        existingId, marketName, apiListing.getSteamid());
+                return existingId;
+            }
+            
+            // If no existing ID found, generate a new one
+            String generatedId = generateListingId(apiListing, marketName);
+            log.debug("Generated new listing ID: {} for market_name={}, steamid={}", 
+                    generatedId, marketName, apiListing.getSteamid());
+            return generatedId;
+            
+        } catch (Exception e) {
+            log.warn("Error querying existing listing ID for market_name={}, steamid={}: {}. " +
+                    "Falling back to generated ID.", marketName, apiListing.getSteamid(), e.getMessage());
+            // Fallback to generated ID if database query fails
+            return generateListingId(apiListing, marketName);
         }
     }
     
