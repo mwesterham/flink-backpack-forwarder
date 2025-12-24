@@ -244,7 +244,8 @@ KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
 KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
 BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests" \
 BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-test-consumer" \
-BACKPACK_TF_API_TOKEN="your-api-token-here" \
+BACKPACK_TF_API_TOKEN="your-backpack-tf-api-token-here" \
+STEAM_API_KEY="your-steam-api-key-here" \
 DB_URL="jdbc:postgresql://localhost:5432/testdb" \
 DB_USERNAME="testuser" \
 DB_PASSWORD="testpass" \
@@ -304,6 +305,39 @@ curl http://localhost:9250/metrics | grep backfill
 curl http://localhost:9250/metrics | grep records_lag_max
 ```
 
+### API Configuration
+
+The application integrates with external APIs for backfill functionality. These APIs require authentication and have configurable rate limiting.
+
+#### BackpackTF API Configuration
+
+**Required:**
+- `BACKPACK_TF_API_TOKEN`: API token for backpack.tf (obtain from https://backpack.tf/developer)
+
+**Optional:**
+- `BACKPACK_TF_API_TIMEOUT_SECONDS`: HTTP timeout for API calls (default: 30)
+- `BACKPACK_TF_SNAPSHOT_RATE_LIMIT_SECONDS`: Delay between snapshot API calls (default: 10 seconds, 6 requests/minute)
+- `BACKPACK_TF_GET_LISTING_RATE_LIMIT_SECONDS`: Delay between getListing API calls (default: 1 second, 60 requests/minute)
+
+#### Steam Web API Configuration
+
+**Required:**
+- `STEAM_API_KEY`: Steam Web API key for inventory access (obtain from https://steamcommunity.com/dev/apikey)
+
+**Optional:**
+- `STEAM_API_TIMEOUT_SECONDS`: HTTP timeout for Steam API calls (default: 30)
+- `STEAM_API_RATE_LIMIT_SECONDS`: Delay between Steam API calls (default: 10 seconds, 6 requests/minute)
+
+#### API Rate Limiting
+
+The application implements rate limiting to comply with API terms of service:
+
+- **BackpackTF Snapshot API**: 6 requests per minute (configurable)
+- **BackpackTF GetListing API**: 60 requests per minute (configurable)  
+- **Steam Web API**: 6 requests per minute (configurable)
+
+Rate limits are enforced globally across all application instances to prevent API abuse.
+
 ### Backfill API Integration
 
 The application supports optional backfill functionality that fetches current market data from the backpack.tf snapshot API. This feature allows refreshing listing data for specific items and identifying stale listings that should be deleted.
@@ -313,20 +347,38 @@ The application supports optional backfill functionality that fetches current ma
 **Required for Backfill (all must be set to enable backfill):**
 - `BACKFILL_KAFKA_TOPIC`: Kafka topic for backfill requests (e.g., "backpack-tf-backfill-requests")
 - `BACKFILL_KAFKA_CONSUMER_GROUP`: Consumer group for backfill requests (e.g., "flink-backfill-consumer")
-- `BACKPACK_TF_API_TOKEN`: API token for backpack.tf snapshot API
+- `BACKPACK_TF_API_TOKEN`: API token for backpack.tf snapshot API (obtain from https://backpack.tf/developer)
+- `STEAM_API_KEY`: Steam Web API key for inventory scanning (obtain from https://steamcommunity.com/dev/apikey)
+
+**Optional Backfill Configuration:**
+- `BACKPACK_TF_API_TIMEOUT_SECONDS`: Timeout for BackpackTF API calls in seconds (default: 30)
+- `BACKPACK_TF_SNAPSHOT_RATE_LIMIT_SECONDS`: Delay between snapshot API calls in seconds (default: 10)
+- `BACKPACK_TF_GET_LISTING_RATE_LIMIT_SECONDS`: Delay between getListing API calls in seconds (default: 1)
+- `STEAM_API_TIMEOUT_SECONDS`: Timeout for Steam API calls in seconds (default: 30)
+- `STEAM_API_RATE_LIMIT_SECONDS`: Delay between Steam API calls in seconds (default: 10)
 
 **Backfill Behavior:**
 - If any required backfill environment variable is missing, backfill functionality is disabled
 - The application will continue to work normally with only Kafka message processing
 - Backfill is completely optional and doesn't affect core functionality
+- Steam API key is required for inventory scanning to match BackpackTF listings with actual Steam items
+- BackpackTF API token is required for fetching market data and detailed listing information
 
 #### Example Backfill Configuration
 
 ```bash
-# Enable backfill functionality (all three required)
+# Enable backfill functionality (all four required)
 export BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests"
 export BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-consumer"
-export BACKPACK_TF_API_TOKEN="your-api-token-here"
+export BACKPACK_TF_API_TOKEN="your-backpack-tf-api-token-here"
+export STEAM_API_KEY="your-steam-api-key-here"
+
+# Optional backfill configuration (with defaults shown)
+export BACKPACK_TF_API_TIMEOUT_SECONDS="30"
+export BACKPACK_TF_SNAPSHOT_RATE_LIMIT_SECONDS="10"
+export BACKPACK_TF_GET_LISTING_RATE_LIMIT_SECONDS="1"
+export STEAM_API_TIMEOUT_SECONDS="30"
+export STEAM_API_RATE_LIMIT_SECONDS="10"
 
 # Core application configuration (still required)
 export KAFKA_BROKERS="localhost:9092"
@@ -355,12 +407,15 @@ Backfill requests should be sent to the backfill Kafka topic with the following 
 #### Backfill Process Flow
 
 1. **Request Processing**: Consumes backfill requests from the dedicated Kafka topic
-2. **Database Query**: Looks up market_name for the item using item_defindex and item_quality_id
-3. **API Call**: Fetches current listings from backpack.tf snapshot API
-4. **Data Processing**: Maps API response to ListingUpdate events
-5. **Stale Detection**: Identifies database listings not present in API response
-6. **Event Emission**: Emits listing-update and listing-delete events through existing pipeline
-7. **Database Updates**: Uses existing ListingUpsertSink and ListingDeleteSink for persistence
+2. **Database Query**: Looks up all existing listings for the item using item_defindex and item_quality_id
+3. **BackpackTF API Call**: Fetches current market listings from backpack.tf snapshot API
+4. **Steam Inventory Scan**: For each BackpackTF listing, scans the user's Steam inventory for matching items
+5. **Item Matching**: Matches inventory items by defindex and quality to correlate with BackpackTF listings
+6. **Detailed Listing Retrieval**: Uses BackpackTF's getListing API to get complete listing data with actual IDs
+7. **Data Processing**: Maps complete listing data to ListingUpdate events
+8. **Stale Detection**: Identifies database listings not present in current BackpackTF API response
+9. **Event Emission**: Emits listing-update and listing-delete events through existing pipeline
+10. **Database Updates**: Uses existing ListingUpsertSink and ListingDeleteSink for persistence
 
 #### Available Metrics
 
