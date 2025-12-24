@@ -107,27 +107,27 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         backfillListingsUpdated = metricGroup.counter(BACKFILL_LISTINGS_UPDATED);
         
         // Performance tracking gauges
-        metricGroup.gauge("backfill_last_api_call_latency", new Gauge<Long>() {
+        metricGroup.gauge(BACKFILL_LAST_API_CALL_LATENCY, new Gauge<Long>() {
             @Override
             public Long getValue() {
                 return lastApiCallLatency;
             }
         });
         
-        metricGroup.gauge("backfill_last_processing_time", new Gauge<Long>() {
+        metricGroup.gauge(BACKFILL_LAST_PROCESSING_TIME, new Gauge<Long>() {
             @Override
             public Long getValue() {
                 return lastProcessingTime;
             }
         });
-        steamApiCallsSuccess = metricGroup.counter("steam_api_calls_success");
-        steamApiCallsFailed = metricGroup.counter("steam_api_calls_failed");
-        getListingApiCallsSuccess = metricGroup.counter("get_listing_api_calls_success");
-        getListingApiCallsFailed = metricGroup.counter("get_listing_api_calls_failed");
-        databaseQueriesSuccess = metricGroup.counter("database_queries_success");
-        databaseQueriesFailed = metricGroup.counter("database_queries_failed");
-        itemsMatched = metricGroup.counter("items_matched");
-        sourceOfTruthListingsCreated = metricGroup.counter("source_of_truth_listings_created");
+        steamApiCallsSuccess = metricGroup.counter(STEAM_API_CALLS_SUCCESS);
+        steamApiCallsFailed = metricGroup.counter(STEAM_API_CALLS_FAILED);
+        getListingApiCallsSuccess = metricGroup.counter(GET_LISTING_API_CALLS_SUCCESS);
+        getListingApiCallsFailed = metricGroup.counter(GET_LISTING_API_CALLS_FAILED);
+        databaseQueriesSuccess = metricGroup.counter(DATABASE_QUERIES_SUCCESS);
+        databaseQueriesFailed = metricGroup.counter(DATABASE_QUERIES_FAILED);
+        itemsMatched = metricGroup.counter(ITEMS_MATCHED);
+        sourceOfTruthListingsCreated = metricGroup.counter(SOURCE_OF_TRUTH_LISTINGS_CREATED);
         
         // Initialize retry policy using existing SqlRetryMetrics patterns
         SqlRetryMetrics sqlRetryMetrics = new SqlRetryMetrics(

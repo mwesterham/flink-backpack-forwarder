@@ -22,7 +22,26 @@ public final class Metrics {
     public static final String BACKFILL_REQUESTS_FAILED = "backfill_requests_failed";
     public static final String BACKFILL_API_CALLS_SUCCESS = "backfill_api_calls_success";
     public static final String BACKFILL_API_CALLS_FAILED = "backfill_api_calls_failed";
-    public static final String BACKFILL_API_CALL_LATENCY = "backfill_api_call_latency";
     public static final String BACKFILL_STALE_LISTINGS_DETECTED = "backfill_stale_listings_detected";
     public static final String BACKFILL_LISTINGS_UPDATED = "backfill_listings_updated";
+
+    // Steam API metrics
+    public static final String STEAM_API_CALLS_SUCCESS = "steam_api_calls_success";
+    public static final String STEAM_API_CALLS_FAILED = "steam_api_calls_failed";
+
+    // BackpackTF getListing API metrics
+    public static final String GET_LISTING_API_CALLS_SUCCESS = "get_listing_api_calls_success";
+    public static final String GET_LISTING_API_CALLS_FAILED = "get_listing_api_calls_failed";
+
+    // Database operation metrics
+    public static final String DATABASE_QUERIES_SUCCESS = "database_queries_success";
+    public static final String DATABASE_QUERIES_FAILED = "database_queries_failed";
+
+    // Item processing metrics
+    public static final String ITEMS_MATCHED = "items_matched";
+    public static final String SOURCE_OF_TRUTH_LISTINGS_CREATED = "source_of_truth_listings_created";
+
+    // Performance tracking gauge metrics
+    public static final String BACKFILL_LAST_API_CALL_LATENCY = "backfill_last_api_call_latency";
+    public static final String BACKFILL_LAST_PROCESSING_TIME = "backfill_last_processing_time";
 }
