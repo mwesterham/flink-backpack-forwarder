@@ -13,6 +13,7 @@ import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.SourceOfTruthListing;
 import me.matthew.flink.backpacktfforward.model.SteamInventoryResponse;
 import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
+import me.matthew.flink.backpacktfforward.util.ListingIdGenerator;
 import me.matthew.flink.backpacktfforward.util.ListingUpdateMapper;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
@@ -21,10 +22,8 @@ import org.apache.flink.metrics.Gauge;
 import org.apache.flink.util.Collector;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.*;
@@ -180,7 +179,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
             }
             
             // Get market name from database listings (needed for BackpackTF API call)
-            String marketName = getMarketNameFromDbListings(allDbListings);
+            String marketName = databaseHelper.getMarketName(request.getItemDefindex(), request.getItemQualityId());
             if (marketName == null) {
                 log.warn("No market_name found for item_defindex={}, item_quality_id={}. " +
                         "This may indicate missing reference data in the database.", 
@@ -291,8 +290,22 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                     for (InventoryItem matchingItem : matchingItems) {
                         long getListingStartTime = System.currentTimeMillis();
                         try {
-                            BackpackTfListingDetail listingDetail = 
-                                    apiClient.getListing(String.valueOf(matchingItem.getId()));
+                            // Generate the correct listing ID based on intent
+                            String listingId;
+                            if ("sell".equalsIgnoreCase(apiListing.getIntent())) {
+                                // For sell listings: {appid}_{assetid}
+                                listingId = ListingIdGenerator.generateSellListingId(440, String.valueOf(matchingItem.getId()));
+                            } else if ("buy".equalsIgnoreCase(apiListing.getIntent())) {
+                                // For buy listings: {appid}_{steamid}_{md5 hash of item name}
+                                // We need the market name for buy listings
+                                listingId = ListingIdGenerator.generateBuyListingId(440, apiListing.getSteamid(), marketName);
+                            } else {
+                                log.warn("Unknown intent '{}' for steamid={}. Skipping this listing.", 
+                                        apiListing.getIntent(), apiListing.getSteamid());
+                                continue;
+                            }
+                            
+                            BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
                             long getListingDuration = System.currentTimeMillis() - getListingStartTime;
                             getListingApiCallsSuccess.inc();
                             getListingApiCallCount++;
@@ -304,19 +317,19 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                                 sourceOfTruthListings.add(sotListing);
                                 sourceOfTruthListingsCreated.inc();
                                 
-                                log.debug("Successfully created source of truth listing in {}ms for item ID: {}, listing ID: {}", 
-                                        getListingDuration, matchingItem.getId(), listingDetail.getId());
+                                log.debug("Successfully created source of truth listing in {}ms for item ID: {}, listing ID: {}, intent: {}", 
+                                        getListingDuration, matchingItem.getId(), listingDetail.getId(), apiListing.getIntent());
                             } else {
-                                log.warn("getListing API returned null or incomplete data after {}ms for item ID: {}. Skipping this item.", 
-                                        getListingDuration, matchingItem.getId());
+                                log.warn("getListing API returned null or incomplete data after {}ms for listing ID: {}. Skipping this item.", 
+                                        getListingDuration, listingId);
                             }
                         } catch (Exception getListingError) {
                             long getListingDuration = System.currentTimeMillis() - getListingStartTime;
                             getListingApiCallsFailed.inc();
                             getListingApiCallCount++;
                             
-                            log.warn("getListing API call failed after {}ms for item ID {}: {}. Skipping this item but continuing with others.", 
-                                    getListingDuration, matchingItem.getId(), getListingError.getMessage());
+                            log.warn("getListing API call failed after {}ms for listing ID generation (intent: {}, steamid: {}, item: {}): {}. Skipping this item but continuing with others.", 
+                                    getListingDuration, apiListing.getIntent(), apiListing.getSteamid(), matchingItem.getId(), getListingError.getMessage());
                             // Continue processing other items
                         }
                     }
@@ -374,21 +387,6 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                      totalProcessingTime, request.getItemDefindex(), request.getItemQualityId(), e.getMessage(), e);
             // Don't rethrow - continue processing other requests to maintain job stability
         }
-    }
-    
-    /**
-     * Extracts market name from database listings.
-     * 
-     * @param allDbListings List of existing database listings
-     * @return market name if available, null otherwise
-     */
-    private String getMarketNameFromDbListings(List<DatabaseHelper.ExistingListing> allDbListings) {
-        if (allDbListings == null || allDbListings.isEmpty()) {
-            return null;
-        }
-        
-        // Get market name from the first listing (all should have the same market name for the same defindex/quality)
-        return allDbListings.get(0).getMarketName();
     }
     
     /**

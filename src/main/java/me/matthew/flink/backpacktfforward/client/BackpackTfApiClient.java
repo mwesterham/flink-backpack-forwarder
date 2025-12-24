@@ -32,7 +32,6 @@ public class BackpackTfApiClient {
     private static final String API_BASE_URL = "https://backpack.tf/api/classifieds/listings/snapshot";
     private static final String GET_LISTING_BASE_URL = "https://backpack.tf/api/classifieds/listings";
     private static final String USER_AGENT = "TF2Autobot-Snapshot-Ingest";
-    private static final Duration TIMEOUT = Duration.ofSeconds(BackpackTfApiConfiguration.getApiTimeoutSeconds());
     
     // Rate limiting: Different limits for different endpoints (configurable)
     // Snapshot API: default 6 requests per minute = 10 seconds between requests

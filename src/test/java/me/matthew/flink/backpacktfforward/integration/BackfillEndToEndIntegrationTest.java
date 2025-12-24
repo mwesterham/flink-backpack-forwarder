@@ -11,10 +11,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.apache.flink.util.Collector;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
-import static org.mockito.ArgumentMatchers.*;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
@@ -132,13 +130,14 @@ class BackfillEndToEndIntegrationTest {
         List<InventoryItem> matchingItems1 = Arrays.asList(createSampleInventoryItem("16525961480"));
         List<InventoryItem> matchingItems2 = Arrays.asList(createSampleInventoryItem("16525961481"));
         when(mockSteamApi.findMatchingItems(any(SteamInventoryResponse.class), eq(190), eq(11)))
-            .thenReturn(matchingItems1, matchingItems2);
+            .thenReturn(matchingItems1)
+            .thenReturn(matchingItems2);
         
         // Mock getListing API responses
         BackpackTfListingDetail listingDetail1 = createSampleListingDetail("440_16525961480", "76561199574661225");
         BackpackTfListingDetail listingDetail2 = createSampleListingDetail("440_16525961481", "76561199574661226");
-        when(mockBackpackTfClient.getListing("16525961480")).thenReturn(listingDetail1);
-        when(mockBackpackTfClient.getListing("16525961481")).thenReturn(listingDetail2);
+        when(mockBackpackTfClient.getListing("440_16525961480")).thenReturn(listingDetail1);
+        when(mockBackpackTfClient.getListing("440_16525961481")).thenReturn(listingDetail2);
         
         // Act: Process the backfill request
         processor.flatMap(request, collector);
@@ -184,8 +183,8 @@ class BackfillEndToEndIntegrationTest {
         verify(mockSteamApi).getPlayerItems("76561199574661225");
         verify(mockSteamApi).getPlayerItems("76561199574661226");
         verify(mockSteamApi, times(2)).findMatchingItems(any(SteamInventoryResponse.class), eq(190), eq(11));
-        verify(mockBackpackTfClient).getListing("16525961480");
-        verify(mockBackpackTfClient).getListing("16525961481");
+        verify(mockBackpackTfClient).getListing("440_16525961480");
+        verify(mockBackpackTfClient).getListing("440_16525961481");
     }
     
     @Test
@@ -316,7 +315,7 @@ class BackfillEndToEndIntegrationTest {
             BackpackTfListingDetail listingDetail = createSampleListingDetail(
                 "440_1652596" + String.format("%04d", i), steamId
             );
-            when(mockBackpackTfClient.getListing("1652596" + String.format("%04d", i)))
+            when(mockBackpackTfClient.getListing("440_1652596" + String.format("%04d", i)))
                 .thenReturn(listingDetail);
         }
         

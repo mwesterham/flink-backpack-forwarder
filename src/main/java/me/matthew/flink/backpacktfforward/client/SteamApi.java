@@ -11,10 +11,12 @@ import me.matthew.flink.backpacktfforward.model.SteamInventoryResponse;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -177,9 +179,11 @@ public class SteamApi {
         // Enforce rate limiting before making the call
         enforceRateLimit();
         
-        // Build the request URL with required parameters
+        // Build the request URL with required parameters (URL-encode parameters for safety)
+        String encodedApiKey = URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+        String encodedSteamId = URLEncoder.encode(steamId, StandardCharsets.UTF_8);
         String url = STEAM_API_BASE_URL.replace("{appid}", String.valueOf(TF2_APPID)) +
-                String.format("?key=%s&steamid=%s&format=json", apiKey, steamId);
+                String.format("?key=%s&steamid=%s&format=json", encodedApiKey, encodedSteamId);
         
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI(url))

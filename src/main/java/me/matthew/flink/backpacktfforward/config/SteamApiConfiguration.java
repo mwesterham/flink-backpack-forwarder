@@ -35,7 +35,18 @@ public class SteamApiConfiguration {
                     STEAM_API_KEY_ENV)
             );
         }
-        return apiKey.trim();
+        
+        String trimmedKey = apiKey.trim();
+        
+        // Validate that the API key contains only expected characters
+        // Steam API keys are typically alphanumeric with some special characters
+        if (!trimmedKey.matches("^[A-Za-z0-9\\-_]+$")) {
+            log.warn("Steam API key contains unexpected characters. This may cause URL encoding issues. " +
+                    "Key length: {} characters. Expected format: alphanumeric with hyphens and underscores only.", 
+                    trimmedKey.length());
+        }
+        
+        return trimmedKey;
     }
 
     /**
