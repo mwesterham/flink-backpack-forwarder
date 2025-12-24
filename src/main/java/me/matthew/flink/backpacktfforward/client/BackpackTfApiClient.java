@@ -5,6 +5,7 @@ import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
+import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
 
 import java.io.IOException;
 import java.net.URI;
@@ -26,6 +27,7 @@ import java.time.Duration;
 public class BackpackTfApiClient {
     
     private static final String API_BASE_URL = "https://backpack.tf/api/classifieds/listings/snapshot";
+    private static final String GET_LISTING_BASE_URL = "https://backpack.tf/api/classifieds/listings";
     private static final String USER_AGENT = "TF2Autobot-Snapshot-Ingest";
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final String API_TOKEN_ENV_VAR = "BACKPACK_TF_API_TOKEN";
@@ -34,6 +36,7 @@ public class BackpackTfApiClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final RetryPolicy<BackpackTfApiResponse> retryPolicy;
+    private final RetryPolicy<BackpackTfListingDetail> getListingRetryPolicy;
     
     /**
      * Creates a new BackpackTfApiClient using API token from environment variables.
@@ -60,6 +63,7 @@ public class BackpackTfApiClient {
                 .build();
         this.objectMapper = new ObjectMapper();
         this.retryPolicy = createRetryPolicy();
+        this.getListingRetryPolicy = createGetListingRetryPolicy();
     }
     
     /**
@@ -102,6 +106,30 @@ public class BackpackTfApiClient {
     }
     
     /**
+     * Creates a retry policy for getListing API calls following existing Failsafe patterns.
+     * 
+     * @return RetryPolicy configured for getListing operations
+     */
+    private RetryPolicy<BackpackTfListingDetail> createGetListingRetryPolicy() {
+        return RetryPolicy.<BackpackTfListingDetail>builder()
+                .handle(IOException.class)
+                .handle(HttpTimeoutException.class)
+                .handleIf(this::isRetryableHttpError)
+                .withDelay(Duration.ofMillis(500))
+                .withMaxRetries(3)
+                .withBackoff(Duration.ofMillis(500), Duration.ofSeconds(5))
+                .onRetry(e -> {
+                    log.warn("GetListing API retry (attempt {}): {}", 
+                            e.getAttemptCount(), 
+                            e.getLastException().getMessage());
+                })
+                .onRetriesExceeded(e -> 
+                        log.error("Max getListing API retries exceeded", e.getException())
+                )
+                .build();
+    }
+    
+    /**
      * Determines if an exception represents a retryable HTTP error.
      * 
      * @param throwable The exception to check
@@ -112,9 +140,12 @@ public class BackpackTfApiClient {
             String message = throwable.getMessage();
             if (message != null) {
                 // Retry on rate limiting (429), server errors (5xx), and timeouts
-                return message.contains("status 429") || 
-                       message.contains("status 5") ||
-                       message.contains("timeout");
+                // Do not retry on 404 (item not found) or 401 (authentication) errors
+                return (message.contains("status 429") || 
+                        message.contains("status 5") ||
+                        message.contains("timeout")) &&
+                       !message.contains("status 404") &&
+                       !message.contains("status 401");
             }
         }
         return false;
@@ -197,6 +228,86 @@ public class BackpackTfApiClient {
         } catch (Exception e) {
             log.error("Failed to parse API response: {}", response.body(), e);
             throw new IOException("Failed to parse API response", e);
+        }
+    }
+    
+    /**
+     * Retrieves detailed listing information by item ID from the backpack.tf getListing API.
+     * Uses retry logic to handle transient failures and follows existing authentication patterns.
+     * 
+     * @param itemId The Steam item ID to retrieve listing details for
+     * @return BackpackTfListingDetail containing the complete listing data with actual listing ID
+     * @throws IOException if the HTTP request fails after all retries
+     * @throws InterruptedException if the request is interrupted
+     * @throws URISyntaxException if the URL construction fails
+     */
+    public BackpackTfListingDetail getListing(String itemId) 
+            throws IOException, InterruptedException, URISyntaxException {
+        
+        log.debug("Fetching listing detail for itemId={}", itemId);
+        
+        return Failsafe.with(getListingRetryPolicy).get(() -> performGetListingCall(itemId));
+    }
+    
+    /**
+     * Performs the actual getListing API call without retry logic.
+     * 
+     * @param itemId The Steam item ID to retrieve listing details for
+     * @return BackpackTfListingDetail containing the complete listing data
+     * @throws IOException if the HTTP request fails or response cannot be parsed
+     * @throws InterruptedException if the request is interrupted
+     * @throws URISyntaxException if the URL construction fails
+     */
+    private BackpackTfListingDetail performGetListingCall(String itemId) 
+            throws IOException, InterruptedException, URISyntaxException {
+        
+        // Build the request URL for getListing endpoint
+        String url = String.format("%s/%s", GET_LISTING_BASE_URL, itemId);
+        
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(new URI(url))
+                .header("User-Agent", USER_AGENT)
+                .header("Authorization", "Bearer " + apiToken)
+                .timeout(TIMEOUT)
+                .GET()
+                .build();
+        
+        log.debug("Making getListing API request to: {}", url);
+        
+        HttpResponse<String> response = httpClient.send(request, 
+                HttpResponse.BodyHandlers.ofString());
+        
+        log.debug("GetListing API response status: {}", response.statusCode());
+        
+        // Handle different HTTP status codes
+        if (response.statusCode() == 429) {
+            throw new IOException("Rate limited by getListing API (status 429)");
+        } else if (response.statusCode() >= 500) {
+            throw new IOException(String.format(
+                    "Server error in getListing API (status %d): %s", 
+                    response.statusCode(), response.body()));
+        } else if (response.statusCode() == 401) {
+            throw new IOException("Authentication failed for getListing API - check API token (status 401)");
+        } else if (response.statusCode() == 404) {
+            throw new IOException(String.format(
+                    "Listing not found for item ID %s (status 404)", itemId));
+        } else if (response.statusCode() != 200) {
+            throw new IOException(String.format(
+                    "GetListing API request failed with status %d: %s", 
+                    response.statusCode(), response.body()));
+        }
+        
+        try {
+            BackpackTfListingDetail listingDetail = objectMapper.readValue(
+                    response.body(), BackpackTfListingDetail.class);
+            
+            log.debug("Successfully parsed getListing API response for item ID: {}", itemId);
+            
+            return listingDetail;
+        } catch (Exception e) {
+            log.error("Failed to parse getListing API response for item ID {}: {}", 
+                    itemId, response.body(), e);
+            throw new IOException("Failed to parse getListing API response", e);
         }
     }
 }
