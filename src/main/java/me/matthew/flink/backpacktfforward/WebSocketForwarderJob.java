@@ -43,10 +43,10 @@ public class WebSocketForwarderJob {
         int deleteBatchSize = Integer.parseInt(System.getenv().getOrDefault("DELETE_BATCH_SIZE", "10"));
         long deleteBatchIntervalMs = Long.parseLong(System.getenv().getOrDefault("DELETE_BATCH_INTERVAL_MS", "1000"));
 
-        log.info("Upsert batch size: {}", upsertBatchSize);
-        log.info("Upsert batch interval (ms): {}", upsertBatchIntervalMs);
-        log.info("Delete batch size: {}", deleteBatchSize);
-        log.info("Delete batch interval (ms): {}", deleteBatchIntervalMs);
+        log.debug("Upsert batch size: {}", upsertBatchSize);
+        log.debug("Upsert batch interval (ms): {}", upsertBatchIntervalMs);
+        log.debug("Delete batch size: {}", deleteBatchSize);
+        log.debug("Delete batch interval (ms): {}", deleteBatchIntervalMs);
 
         if (dbUrl == null || dbUser == null || dbPass == null)
             throw new IllegalArgumentException("Database env vars missing");
