@@ -29,20 +29,21 @@ import java.util.stream.Collectors;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.*;
 
 /**
- * Flink processor that handles backfill requests using the new Steam integration approach.
+ * Flink processor that handles backfill requests using an optimized Steam integration approach.
  * 
- * This processor implements a 7-step data flow:
+ * This processor implements a 7-step data flow with performance optimizations:
  * 1. Query database for ALL rows matching defindex/quality combination
  * 2. Fetch BackpackTF market data using market name
- * 3. Scan Steam user inventories for matching items
- * 4. Match items by defindex and quality
+ * 3. Process listings with optimized approach:
+ *    - Buy orders: Generate listing ID directly from steamid + item name (no Steam API call)
+ *    - Sell orders: Scan Steam user inventories for matching items
+ * 4. Match items by defindex and quality (sell orders only)
  * 5. Retrieve detailed listing data via getListing API
  * 6. Detect stale data by comparing database with source of truth
  * 7. Generate ListingUpdate events for updates and deletes
  * 
- * The new approach addresses the missing ID issue by using Steam inventory scanning
- * to correlate BackpackTF listings with actual Steam items, then using the getListing
- * API to retrieve complete listing data with proper IDs.
+ * The optimized approach significantly reduces API calls by avoiding unnecessary Steam
+ * inventory scans for buy orders, where the listing ID can be constructed directly.
  */
 @Slf4j
 public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, ListingUpdate> {
@@ -236,74 +237,24 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 return;
             }
             
-            // Step 3-5: Process each BackpackTF listing through Steam inventory scan and getListing API
+            // Step 3-5: Process each BackpackTF listing with optimized approach
+            // - Buy orders: Generate listing ID directly (no Steam API call needed)
+            // - Sell orders: Scan Steam inventory to find matching items, then get listing details
             List<SourceOfTruthListing> sourceOfTruthListings = new ArrayList<>();
             int steamApiCallCount = 0;
             int getListingApiCallCount = 0;
             int totalItemsMatched = 0;
             
-            log.info("Processing {} BackpackTF listings through Steam inventory scan", apiResponse.getListings().size());
+            log.info("Processing {} BackpackTF listings with optimized approach (buy orders skip Steam API)", apiResponse.getListings().size());
             
             for (BackpackTfApiResponse.ApiListing apiListing : apiResponse.getListings()) {
                 try {
-                    // Step 3: Use SteamApi to scan inventory for matching items
-                    SteamInventoryResponse inventory = null;
-                    long steamApiStartTime = System.currentTimeMillis();
-                    try {
-                        inventory = steamApi.getPlayerItems(apiListing.getSteamid());
-                        long steamApiDuration = System.currentTimeMillis() - steamApiStartTime;
-                        steamApiCallsSuccess.inc();
-                        steamApiCallCount++;
-                        
-                        log.debug("Steam API call completed in {}ms for steamid: {} with {} items", 
-                                steamApiDuration, apiListing.getSteamid(), 
-                                inventory != null && inventory.getResult() != null && inventory.getResult().getItems() != null 
-                                        ? inventory.getResult().getItems().size() : 0);
-                    } catch (Exception steamError) {
-                        long steamApiDuration = System.currentTimeMillis() - steamApiStartTime;
-                        steamApiCallsFailed.inc();
-                        steamApiCallCount++;
-                        
-                        log.warn("Steam API call failed after {}ms for steamid={}: {}. Skipping this listing but continuing with others.", 
-                                steamApiDuration, apiListing.getSteamid(), steamError.getMessage());
-                        continue; // Skip this listing but continue processing others
-                    }
-                    
-                    if (inventory == null || inventory.getResult() == null || inventory.getResult().getItems() == null) {
-                        log.debug("No inventory data available for steamid: {}. Skipping this listing.", 
-                                apiListing.getSteamid());
-                        continue;
-                    }
-                    
-                    // Step 4: Match items by defindex and quality
-                    List<InventoryItem> matchingItems = steamApi.findMatchingItems(
-                            inventory, request.getItemDefindex(), request.getItemQualityId());
-                    
-                    totalItemsMatched += matchingItems.size();
-                    itemsMatched.inc(matchingItems.size());
-                    
-                    log.debug("Found {} matching items in inventory for steamid: {}, defindex: {}, quality: {}", 
-                            matchingItems.size(), apiListing.getSteamid(), 
-                            request.getItemDefindex(), request.getItemQualityId());
-                    
-                    // Step 5: For each matching item, call getListing API to get complete data
-                    for (InventoryItem matchingItem : matchingItems) {
+                    // Check intent to determine processing path
+                    if ("buy".equalsIgnoreCase(apiListing.getIntent())) {
+                        // For buy orders: construct listing ID directly without Steam API call
                         long getListingStartTime = System.currentTimeMillis();
                         try {
-                            // Generate the correct listing ID based on intent
-                            String listingId;
-                            if ("sell".equalsIgnoreCase(apiListing.getIntent())) {
-                                // For sell listings: {appid}_{assetid}
-                                listingId = ListingIdGenerator.generateSellListingId(440, String.valueOf(matchingItem.getId()));
-                            } else if ("buy".equalsIgnoreCase(apiListing.getIntent())) {
-                                // For buy listings: {appid}_{steamid}_{md5 hash of item name}
-                                // We need the market name for buy listings
-                                listingId = ListingIdGenerator.generateBuyListingId(440, apiListing.getSteamid(), marketName);
-                            } else {
-                                log.warn("Unknown intent '{}' for steamid={}. Skipping this listing.", 
-                                        apiListing.getIntent(), apiListing.getSteamid());
-                                continue;
-                            }
+                            String listingId = ListingIdGenerator.generateBuyListingId(440, apiListing.getSteamid(), marketName);
                             
                             BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
                             long getListingDuration = System.currentTimeMillis() - getListingStartTime;
@@ -311,16 +262,16 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                             getListingApiCallCount++;
                             
                             if (listingDetail != null && listingDetail.getId() != null) {
-                                // Create source of truth entry with complete data
+                                // Create source of truth entry with complete data (no inventory item needed for buy orders)
                                 SourceOfTruthListing sotListing = new SourceOfTruthListing(
-                                        apiListing, matchingItem, listingDetail);
+                                        apiListing, null, listingDetail);
                                 sourceOfTruthListings.add(sotListing);
                                 sourceOfTruthListingsCreated.inc();
                                 
-                                log.debug("Successfully created source of truth listing in {}ms for item ID: {}, listing ID: {}, intent: {}", 
-                                        getListingDuration, matchingItem.getId(), listingDetail.getId(), apiListing.getIntent());
+                                log.debug("Successfully created source of truth listing for buy order in {}ms: listing ID: {}, steamid: {}", 
+                                        getListingDuration, listingDetail.getId(), apiListing.getSteamid());
                             } else {
-                                log.warn("getListing API returned null or incomplete data after {}ms for listing ID: {}. Skipping this item.", 
+                                log.warn("getListing API returned null or incomplete data after {}ms for buy order listing ID: {}. Skipping this listing.", 
                                         getListingDuration, listingId);
                             }
                         } catch (Exception getListingError) {
@@ -328,10 +279,90 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                             getListingApiCallsFailed.inc();
                             getListingApiCallCount++;
                             
-                            log.warn("getListing API call failed after {}ms for listing ID generation (intent: {}, steamid: {}, item: {}): {}. Skipping this item but continuing with others.", 
-                                    getListingDuration, apiListing.getIntent(), apiListing.getSteamid(), matchingItem.getId(), getListingError.getMessage());
-                            // Continue processing other items
+                            log.warn("getListing API call failed after {}ms for buy order (steamid: {}): {}. Skipping this listing but continuing with others.", 
+                                    getListingDuration, apiListing.getSteamid(), getListingError.getMessage());
                         }
+                        
+                    } else if ("sell".equalsIgnoreCase(apiListing.getIntent())) {
+                        // For sell orders: need Steam API to scan inventory for matching items
+                        SteamInventoryResponse inventory = null;
+                        long steamApiStartTime = System.currentTimeMillis();
+                        try {
+                            inventory = steamApi.getPlayerItems(apiListing.getSteamid());
+                            long steamApiDuration = System.currentTimeMillis() - steamApiStartTime;
+                            steamApiCallsSuccess.inc();
+                            steamApiCallCount++;
+                            
+                            log.debug("Steam API call completed in {}ms for sell order steamid: {} with {} items", 
+                                    steamApiDuration, apiListing.getSteamid(), 
+                                    inventory != null && inventory.getResult() != null && inventory.getResult().getItems() != null 
+                                            ? inventory.getResult().getItems().size() : 0);
+                        } catch (Exception steamError) {
+                            long steamApiDuration = System.currentTimeMillis() - steamApiStartTime;
+                            steamApiCallsFailed.inc();
+                            steamApiCallCount++;
+                            
+                            log.warn("Steam API call failed after {}ms for sell order steamid={}: {}. Skipping this listing but continuing with others.", 
+                                    steamApiDuration, apiListing.getSteamid(), steamError.getMessage());
+                            continue; // Skip this listing but continue processing others
+                        }
+                        
+                        if (inventory == null || inventory.getResult() == null || inventory.getResult().getItems() == null) {
+                            log.debug("No inventory data available for sell order steamid: {}. Skipping this listing.", 
+                                    apiListing.getSteamid());
+                            continue;
+                        }
+                        
+                        // Match items by defindex and quality
+                        List<InventoryItem> matchingItems = steamApi.findMatchingItems(
+                                inventory, request.getItemDefindex(), request.getItemQualityId());
+                        
+                        totalItemsMatched += matchingItems.size();
+                        itemsMatched.inc(matchingItems.size());
+                        
+                        log.debug("Found {} matching items in inventory for sell order steamid: {}, defindex: {}, quality: {}", 
+                                matchingItems.size(), apiListing.getSteamid(), 
+                                request.getItemDefindex(), request.getItemQualityId());
+                        
+                        // For each matching item, call getListing API to get complete data
+                        for (InventoryItem matchingItem : matchingItems) {
+                            long getListingStartTime = System.currentTimeMillis();
+                            try {
+                                String listingId = ListingIdGenerator.generateSellListingId(440, String.valueOf(matchingItem.getId()));
+                                
+                                BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
+                                long getListingDuration = System.currentTimeMillis() - getListingStartTime;
+                                getListingApiCallsSuccess.inc();
+                                getListingApiCallCount++;
+                                
+                                if (listingDetail != null && listingDetail.getId() != null) {
+                                    // Create source of truth entry with complete data
+                                    SourceOfTruthListing sotListing = new SourceOfTruthListing(
+                                            apiListing, matchingItem, listingDetail);
+                                    sourceOfTruthListings.add(sotListing);
+                                    sourceOfTruthListingsCreated.inc();
+                                    
+                                    log.debug("Successfully created source of truth listing for sell order in {}ms: item ID: {}, listing ID: {}", 
+                                            getListingDuration, matchingItem.getId(), listingDetail.getId());
+                                } else {
+                                    log.warn("getListing API returned null or incomplete data after {}ms for sell order listing ID: {}. Skipping this item.", 
+                                            getListingDuration, listingId);
+                                }
+                            } catch (Exception getListingError) {
+                                long getListingDuration = System.currentTimeMillis() - getListingStartTime;
+                                getListingApiCallsFailed.inc();
+                                getListingApiCallCount++;
+                                
+                                log.warn("getListing API call failed after {}ms for sell order (steamid: {}, item: {}): {}. Skipping this item but continuing with others.", 
+                                        getListingDuration, apiListing.getSteamid(), matchingItem.getId(), getListingError.getMessage());
+                                // Continue processing other items
+                            }
+                        }
+                        
+                    } else {
+                        log.warn("Unknown intent '{}' for steamid={}. Skipping this listing.", 
+                                apiListing.getIntent(), apiListing.getSteamid());
+                        continue;
                     }
                     
                 } catch (Exception listingProcessingError) {
@@ -341,7 +372,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 }
             }
             
-            log.info("API processing completed: {} Steam API calls, {} getListing API calls, {} items matched, {} source of truth listings created", 
+            log.info("Optimized API processing completed: {} Steam API calls (sell orders only), {} getListing API calls, {} items matched, {} source of truth listings created", 
                     steamApiCallCount, getListingApiCallCount, totalItemsMatched, sourceOfTruthListings.size());
             
             // Step 6: Generate listing-update events for source of truth
