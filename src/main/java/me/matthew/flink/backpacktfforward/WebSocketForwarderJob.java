@@ -1,6 +1,9 @@
 package me.matthew.flink.backpacktfforward;
 
 import lombok.extern.slf4j.Slf4j;
+import me.matthew.flink.backpacktfforward.config.ApiConfiguration;
+import me.matthew.flink.backpacktfforward.config.BackpackTfApiConfiguration;
+import me.matthew.flink.backpacktfforward.config.SteamApiConfiguration;
 import me.matthew.flink.backpacktfforward.model.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.parser.BackfillMessageParser;
@@ -175,6 +178,7 @@ public class WebSocketForwarderJob {
     /**
      * Validates backfill configuration and determines if backfill functionality should be enabled.
      * Backfill is optional functionality that requires specific environment variables to be set.
+     * Uses centralized configuration validation for API clients.
      * 
      * @return true if backfill should be enabled, false otherwise
      */
@@ -182,12 +186,11 @@ public class WebSocketForwarderJob {
         log.info("Validating backfill configuration...");
         
         try {
-            // Check required backfill environment variables
+            // Check required backfill Kafka environment variables
             String backfillTopic = System.getenv("BACKFILL_KAFKA_TOPIC");
             String backfillConsumerGroup = System.getenv("BACKFILL_KAFKA_CONSUMER_GROUP");
-            String backfillApiToken = System.getenv("BACKPACK_TF_API_TOKEN");
             
-            // If any required variable is missing, backfill is disabled
+            // If any required Kafka variable is missing, backfill is disabled
             if (backfillTopic == null || backfillTopic.trim().isEmpty()) {
                 log.info("BACKFILL_KAFKA_TOPIC not set, backfill functionality disabled");
                 return false;
@@ -198,23 +201,24 @@ public class WebSocketForwarderJob {
                 return false;
             }
             
-            if (backfillApiToken == null || backfillApiToken.trim().isEmpty()) {
-                log.info("BACKPACK_TF_API_TOKEN not set, backfill functionality disabled");
-                return false;
-            }
-            
-            // Validate that backfill configuration is complete
+            // Validate API configurations using centralized configuration classes
             try {
+                SteamApiConfiguration.validateConfiguration();
+                
+                // Validate that backfill Kafka configuration is complete
                 BackfillRequestSource.getBackfillKafkaTopic();
                 BackfillRequestSource.getBackfillKafkaConsumerGroup();
+                
                 log.info("Backfill configuration validation successful:");
                 log.info("  Backfill Topic: {}", backfillTopic);
                 log.info("  Backfill Consumer Group: {}", backfillConsumerGroup);
-                log.info("  API Token: [CONFIGURED]");
+                log.info("  BackpackTF API: CONFIGURED");
+                log.info("  Steam API: CONFIGURED");
                 return true;
                 
             } catch (IllegalArgumentException e) {
-                log.warn("Backfill configuration validation failed: {}", e.getMessage());
+                log.warn("Backfill API configuration validation failed: {}", e.getMessage());
+                log.info("Backfill functionality disabled due to missing API configuration");
                 return false;
             }
             

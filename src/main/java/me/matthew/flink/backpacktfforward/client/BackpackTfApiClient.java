@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
+import me.matthew.flink.backpacktfforward.config.BackpackTfApiConfiguration;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
 import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
 
@@ -31,14 +32,13 @@ public class BackpackTfApiClient {
     private static final String API_BASE_URL = "https://backpack.tf/api/classifieds/listings/snapshot";
     private static final String GET_LISTING_BASE_URL = "https://backpack.tf/api/classifieds/listings";
     private static final String USER_AGENT = "TF2Autobot-Snapshot-Ingest";
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-    private static final String API_TOKEN_ENV_VAR = "BACKPACK_TF_API_TOKEN";
+    private static final Duration TIMEOUT = Duration.ofSeconds(BackpackTfApiConfiguration.getApiTimeoutSeconds());
     
-    // Rate limiting: Different limits for different endpoints
-    // Snapshot API: 6 requests per minute = 10 seconds between requests
-    private static final Duration SNAPSHOT_RATE_LIMIT_DELAY = Duration.ofSeconds(10);
-    // GetListing API: 60 requests per minute = 1 second between requests
-    private static final Duration GET_LISTING_RATE_LIMIT_DELAY = Duration.ofSeconds(1);
+    // Rate limiting: Different limits for different endpoints (configurable)
+    // Snapshot API: default 6 requests per minute = 10 seconds between requests
+    private static final Duration SNAPSHOT_RATE_LIMIT_DELAY = Duration.ofSeconds(BackpackTfApiConfiguration.getSnapshotRateLimitSeconds());
+    // GetListing API: default 60 requests per minute = 1 second between requests
+    private static final Duration GET_LISTING_RATE_LIMIT_DELAY = Duration.ofSeconds(BackpackTfApiConfiguration.getGetListingRateLimitSeconds());
     
     private final String apiToken;
     private final HttpClient httpClient;
@@ -59,7 +59,7 @@ public class BackpackTfApiClient {
      * @throws IllegalStateException if the API token is not configured
      */
     public BackpackTfApiClient() {
-        this(getApiTokenFromEnvironment());
+        this(BackpackTfApiConfiguration.getApiToken());
     }
     
     /**
@@ -74,26 +74,11 @@ public class BackpackTfApiClient {
         
         this.apiToken = apiToken;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(TIMEOUT)
+                .connectTimeout(Duration.ofSeconds(BackpackTfApiConfiguration.getApiTimeoutSeconds()))
                 .build();
         this.objectMapper = new ObjectMapper();
         this.retryPolicy = createRetryPolicy();
         this.getListingRetryPolicy = createGetListingRetryPolicy();
-    }
-    
-    /**
-     * Retrieves the API token from environment variables.
-     * 
-     * @return The API token
-     * @throws IllegalStateException if the token is not configured
-     */
-    private static String getApiTokenFromEnvironment() {
-        String token = System.getenv(API_TOKEN_ENV_VAR);
-        if (token == null || token.trim().isEmpty()) {
-            throw new IllegalStateException(
-                    "API token not configured. Please set the " + API_TOKEN_ENV_VAR + " environment variable.");
-        }
-        return token;
     }
     
     /**
@@ -266,7 +251,7 @@ public class BackpackTfApiClient {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI(url))
                 .header("User-Agent", USER_AGENT)
-                .timeout(TIMEOUT)
+                .timeout(Duration.ofSeconds(BackpackTfApiConfiguration.getApiTimeoutSeconds()))
                 .GET()
                 .build();
         
@@ -347,7 +332,7 @@ public class BackpackTfApiClient {
                 .uri(new URI(url))
                 .header("User-Agent", USER_AGENT)
                 .header("Authorization", "Bearer " + apiToken)
-                .timeout(TIMEOUT)
+                .timeout(Duration.ofSeconds(BackpackTfApiConfiguration.getApiTimeoutSeconds()))
                 .GET()
                 .build();
         

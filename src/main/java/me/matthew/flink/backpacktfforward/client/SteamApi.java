@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
+import me.matthew.flink.backpacktfforward.config.SteamApiConfiguration;
 import me.matthew.flink.backpacktfforward.model.InventoryItem;
 import me.matthew.flink.backpacktfforward.model.SteamInventoryResponse;
 
@@ -30,11 +31,10 @@ public class SteamApi {
     
     private static final String STEAM_API_BASE_URL = "http://api.steampowered.com/IEconItems_{appid}/GetPlayerItems/v0001/";
     private static final int TF2_APPID = 440;
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-    private static final String API_KEY_ENV_VAR = "STEAM_API_KEY";
+    private static final Duration TIMEOUT = Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds());
     
-    // Rate limiting: 6 requests per minute = 10 seconds between requests
-    private static final Duration RATE_LIMIT_DELAY = Duration.ofSeconds(10);
+    // Rate limiting: configurable delay between requests (default 10 seconds for 6 requests per minute)
+    private static final Duration RATE_LIMIT_DELAY = Duration.ofSeconds(SteamApiConfiguration.getSteamApiRateLimitSeconds());
     
     private final String apiKey;
     private final HttpClient httpClient;
@@ -51,7 +51,7 @@ public class SteamApi {
      * @throws IllegalStateException if the API key is not configured
      */
     public SteamApi() {
-        this(getApiKeyFromEnvironment());
+        this(SteamApiConfiguration.getSteamApiKey());
     }
     
     /**
@@ -66,25 +66,10 @@ public class SteamApi {
         
         this.apiKey = apiKey;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(TIMEOUT)
+                .connectTimeout(Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds()))
                 .build();
         this.objectMapper = new ObjectMapper();
         this.retryPolicy = createRetryPolicy();
-    }
-    
-    /**
-     * Retrieves the Steam API key from environment variables.
-     * 
-     * @return The Steam API key
-     * @throws IllegalStateException if the key is not configured
-     */
-    private static String getApiKeyFromEnvironment() {
-        String key = System.getenv(API_KEY_ENV_VAR);
-        if (key == null || key.trim().isEmpty()) {
-            throw new IllegalStateException(
-                    "Steam API key not configured. Please set the " + API_KEY_ENV_VAR + " environment variable.");
-        }
-        return key;
     }
     
     /**
@@ -198,7 +183,7 @@ public class SteamApi {
         
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI(url))
-                .timeout(TIMEOUT)
+                .timeout(Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds()))
                 .GET()
                 .build();
         
