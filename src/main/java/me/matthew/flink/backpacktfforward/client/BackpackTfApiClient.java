@@ -17,6 +17,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * HTTP client for calling the backpack.tf snapshot API.
@@ -32,11 +34,24 @@ public class BackpackTfApiClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final String API_TOKEN_ENV_VAR = "BACKPACK_TF_API_TOKEN";
     
+    // Rate limiting: Different limits for different endpoints
+    // Snapshot API: 6 requests per minute = 10 seconds between requests
+    private static final Duration SNAPSHOT_RATE_LIMIT_DELAY = Duration.ofSeconds(10);
+    // GetListing API: 60 requests per minute = 1 second between requests
+    private static final Duration GET_LISTING_RATE_LIMIT_DELAY = Duration.ofSeconds(1);
+    
     private final String apiToken;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final RetryPolicy<BackpackTfApiResponse> retryPolicy;
     private final RetryPolicy<BackpackTfListingDetail> getListingRetryPolicy;
+    
+    // Separate rate limiting state for each endpoint
+    private static final ReentrantLock snapshotRateLimitLock = new ReentrantLock();
+    private static volatile Instant lastSnapshotApiCall = Instant.EPOCH;
+    
+    private static final ReentrantLock getListingRateLimitLock = new ReentrantLock();
+    private static volatile Instant lastGetListingApiCall = Instant.EPOCH;
     
     /**
      * Creates a new BackpackTfApiClient using API token from environment variables.
@@ -82,7 +97,7 @@ public class BackpackTfApiClient {
     }
     
     /**
-     * Creates a retry policy for API calls following existing Failsafe patterns.
+     * Creates a retry policy for API calls with exponential backoff for rate limiting.
      * 
      * @return RetryPolicy configured for API operations
      */
@@ -92,21 +107,21 @@ public class BackpackTfApiClient {
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofMillis(500))
-                .withMaxRetries(3)
-                .withBackoff(Duration.ofMillis(500), Duration.ofSeconds(5))
+                .withMaxRetries(5) // Increased retries for rate limiting
+                .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
                 .onRetry(e -> {
-                    log.warn("API retry (attempt {}): {}", 
+                    log.warn("BackpackTF API retry (attempt {}): {}", 
                             e.getAttemptCount(), 
                             e.getLastException().getMessage());
                 })
                 .onRetriesExceeded(e -> 
-                        log.error("Max API retries exceeded", e.getException())
+                        log.error("Max BackpackTF API retries exceeded", e.getException())
                 )
                 .build();
     }
     
     /**
-     * Creates a retry policy for getListing API calls following existing Failsafe patterns.
+     * Creates a retry policy for getListing API calls with exponential backoff for rate limiting.
      * 
      * @return RetryPolicy configured for getListing operations
      */
@@ -116,15 +131,15 @@ public class BackpackTfApiClient {
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofMillis(500))
-                .withMaxRetries(3)
-                .withBackoff(Duration.ofMillis(500), Duration.ofSeconds(5))
+                .withMaxRetries(5) // Increased retries for rate limiting
+                .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
                 .onRetry(e -> {
-                    log.warn("GetListing API retry (attempt {}): {}", 
+                    log.warn("BackpackTF getListing API retry (attempt {}): {}", 
                             e.getAttemptCount(), 
                             e.getLastException().getMessage());
                 })
                 .onRetriesExceeded(e -> 
-                        log.error("Max getListing API retries exceeded", e.getException())
+                        log.error("Max BackpackTF getListing API retries exceeded", e.getException())
                 )
                 .build();
     }
@@ -152,6 +167,56 @@ public class BackpackTfApiClient {
     }
     
     /**
+     * Enforces rate limiting for snapshot API calls by ensuring minimum delay between calls.
+     * Uses a static lock to coordinate across all instances of the client.
+     * Snapshot API: 6 requests per minute = 10 seconds between requests.
+     * 
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    private void enforceSnapshotRateLimit() throws InterruptedException {
+        snapshotRateLimitLock.lock();
+        try {
+            Instant now = Instant.now();
+            Duration timeSinceLastCall = Duration.between(lastSnapshotApiCall, now);
+            
+            if (timeSinceLastCall.compareTo(SNAPSHOT_RATE_LIMIT_DELAY) < 0) {
+                Duration waitTime = SNAPSHOT_RATE_LIMIT_DELAY.minus(timeSinceLastCall);
+                log.debug("Snapshot API rate limiting: waiting {} ms before next call", waitTime.toMillis());
+                Thread.sleep(waitTime.toMillis());
+            }
+            
+            lastSnapshotApiCall = Instant.now();
+        } finally {
+            snapshotRateLimitLock.unlock();
+        }
+    }
+    
+    /**
+     * Enforces rate limiting for getListing API calls by ensuring minimum delay between calls.
+     * Uses a static lock to coordinate across all instances of the client.
+     * GetListing API: 60 requests per minute = 1 second between requests.
+     * 
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    private void enforceGetListingRateLimit() throws InterruptedException {
+        getListingRateLimitLock.lock();
+        try {
+            Instant now = Instant.now();
+            Duration timeSinceLastCall = Duration.between(lastGetListingApiCall, now);
+            
+            if (timeSinceLastCall.compareTo(GET_LISTING_RATE_LIMIT_DELAY) < 0) {
+                Duration waitTime = GET_LISTING_RATE_LIMIT_DELAY.minus(timeSinceLastCall);
+                log.debug("GetListing API rate limiting: waiting {} ms before next call", waitTime.toMillis());
+                Thread.sleep(waitTime.toMillis());
+            }
+            
+            lastGetListingApiCall = Instant.now();
+        } finally {
+            getListingRateLimitLock.unlock();
+        }
+    }
+    
+    /**
      * Fetches snapshot data from the backpack.tf API for a specific item.
      * Uses retry logic to handle transient failures.
      * 
@@ -172,6 +237,7 @@ public class BackpackTfApiClient {
     
     /**
      * Performs the actual API call without retry logic.
+     * Enforces snapshot API rate limiting before making the call.
      * 
      * @param sku The market name (SKU) of the item to fetch
      * @param appid The Steam application ID
@@ -182,6 +248,9 @@ public class BackpackTfApiClient {
      */
     private BackpackTfApiResponse performApiCall(String sku, int appid) 
             throws IOException, InterruptedException, URISyntaxException {
+        
+        // Enforce snapshot API rate limiting before making the call (6/min = 10s delay)
+        enforceSnapshotRateLimit();
         
         // Build the request URL with parameters - URL encode the sku parameter
         String encodedSku = URLEncoder.encode(sku, StandardCharsets.UTF_8);
@@ -195,25 +264,25 @@ public class BackpackTfApiClient {
                 .GET()
                 .build();
         
-        log.debug("Making API request to: {}", url.replaceAll("token=[^&]*", "token=***"));
+        log.debug("Making BackpackTF API request to: {}", url.replaceAll("token=[^&]*", "token=***"));
         
         HttpResponse<String> response = httpClient.send(request, 
                 HttpResponse.BodyHandlers.ofString());
         
-        log.debug("API response status: {}", response.statusCode());
+        log.debug("BackpackTF API response status: {}", response.statusCode());
         
         // Handle different HTTP status codes
         if (response.statusCode() == 429) {
-            throw new IOException("Rate limited by API (status 429)");
+            throw new IOException("Rate limited by BackpackTF API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
             throw new IOException(String.format(
-                    "Server error (status %d): %s", 
+                    "BackpackTF API server error (status %d): %s", 
                     response.statusCode(), response.body()));
         } else if (response.statusCode() == 401) {
-            throw new IOException("Authentication failed - check API token (status 401)");
+            throw new IOException("BackpackTF API authentication failed - check API token (status 401)");
         } else if (response.statusCode() != 200) {
             throw new IOException(String.format(
-                    "API request failed with status %d: %s", 
+                    "BackpackTF API request failed with status %d: %s", 
                     response.statusCode(), response.body()));
         }
         
@@ -221,13 +290,13 @@ public class BackpackTfApiClient {
             BackpackTfApiResponse apiResponse = objectMapper.readValue(
                     response.body(), BackpackTfApiResponse.class);
             
-            log.debug("Successfully parsed API response with {} listings", 
+            log.debug("Successfully parsed BackpackTF API response with {} listings", 
                     apiResponse.getListings() != null ? apiResponse.getListings().size() : 0);
             
             return apiResponse;
         } catch (Exception e) {
-            log.error("Failed to parse API response: {}", response.body(), e);
-            throw new IOException("Failed to parse API response", e);
+            log.error("Failed to parse BackpackTF API response: {}", response.body(), e);
+            throw new IOException("Failed to parse BackpackTF API response", e);
         }
     }
     
@@ -251,6 +320,7 @@ public class BackpackTfApiClient {
     
     /**
      * Performs the actual getListing API call without retry logic.
+     * Enforces getListing API rate limiting before making the call.
      * 
      * @param itemId The Steam item ID to retrieve listing details for
      * @return BackpackTfListingDetail containing the complete listing data
@@ -260,6 +330,9 @@ public class BackpackTfApiClient {
      */
     private BackpackTfListingDetail performGetListingCall(String itemId) 
             throws IOException, InterruptedException, URISyntaxException {
+        
+        // Enforce getListing API rate limiting before making the call (60/min = 1s delay)
+        enforceGetListingRateLimit();
         
         // Build the request URL for getListing endpoint
         String url = String.format("%s/%s", GET_LISTING_BASE_URL, itemId);
@@ -272,28 +345,28 @@ public class BackpackTfApiClient {
                 .GET()
                 .build();
         
-        log.debug("Making getListing API request to: {}", url);
+        log.debug("Making BackpackTF getListing API request to: {}", url);
         
         HttpResponse<String> response = httpClient.send(request, 
                 HttpResponse.BodyHandlers.ofString());
         
-        log.debug("GetListing API response status: {}", response.statusCode());
+        log.debug("BackpackTF getListing API response status: {}", response.statusCode());
         
         // Handle different HTTP status codes
         if (response.statusCode() == 429) {
-            throw new IOException("Rate limited by getListing API (status 429)");
+            throw new IOException("Rate limited by BackpackTF getListing API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
             throw new IOException(String.format(
-                    "Server error in getListing API (status %d): %s", 
+                    "BackpackTF getListing API server error (status %d): %s", 
                     response.statusCode(), response.body()));
         } else if (response.statusCode() == 401) {
-            throw new IOException("Authentication failed for getListing API - check API token (status 401)");
+            throw new IOException("BackpackTF getListing API authentication failed - check API token (status 401)");
         } else if (response.statusCode() == 404) {
             throw new IOException(String.format(
                     "Listing not found for item ID %s (status 404)", itemId));
         } else if (response.statusCode() != 200) {
             throw new IOException(String.format(
-                    "GetListing API request failed with status %d: %s", 
+                    "BackpackTF getListing API request failed with status %d: %s", 
                     response.statusCode(), response.body()));
         }
         
@@ -301,13 +374,13 @@ public class BackpackTfApiClient {
             BackpackTfListingDetail listingDetail = objectMapper.readValue(
                     response.body(), BackpackTfListingDetail.class);
             
-            log.debug("Successfully parsed getListing API response for item ID: {}", itemId);
+            log.debug("Successfully parsed BackpackTF getListing API response for item ID: {}", itemId);
             
             return listingDetail;
         } catch (Exception e) {
-            log.error("Failed to parse getListing API response for item ID {}: {}", 
+            log.error("Failed to parse BackpackTF getListing API response for item ID {}: {}", 
                     itemId, response.body(), e);
-            throw new IOException("Failed to parse getListing API response", e);
+            throw new IOException("Failed to parse BackpackTF getListing API response", e);
         }
     }
 }

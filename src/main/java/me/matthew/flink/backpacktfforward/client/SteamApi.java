@@ -15,8 +15,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * HTTP client for querying Steam Web API to retrieve user inventory data.
@@ -31,10 +33,17 @@ public class SteamApi {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final String API_KEY_ENV_VAR = "STEAM_API_KEY";
     
+    // Rate limiting: 6 requests per minute = 10 seconds between requests
+    private static final Duration RATE_LIMIT_DELAY = Duration.ofSeconds(10);
+    
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final RetryPolicy<SteamInventoryResponse> retryPolicy;
+    
+    // Rate limiting state - shared across all instances to prevent multiple clients from overwhelming the API
+    private static final ReentrantLock rateLimitLock = new ReentrantLock();
+    private static volatile Instant lastApiCall = Instant.EPOCH;
     
     /**
      * Creates a new SteamApi using API key from environment variables.
@@ -79,7 +88,7 @@ public class SteamApi {
     }
     
     /**
-     * Creates a retry policy for Steam API calls following existing Failsafe patterns.
+     * Creates a retry policy for Steam API calls with exponential backoff for rate limiting.
      * 
      * @return RetryPolicy configured for Steam API operations
      */
@@ -88,9 +97,9 @@ public class SteamApi {
                 .handle(IOException.class)
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
-                .withDelay(Duration.ofSeconds(1)) // Steam API rate limiting: 1 request per second
-                .withMaxRetries(3)
-                .withBackoff(Duration.ofSeconds(1), Duration.ofSeconds(10))
+                .withDelay(Duration.ofSeconds(1))
+                .withMaxRetries(5) // Increased retries for rate limiting
+                .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
                 .onRetry(e -> {
                     log.warn("Steam API retry (attempt {}): {}", 
                             e.getAttemptCount(), 
@@ -122,6 +131,30 @@ public class SteamApi {
     }
     
     /**
+     * Enforces rate limiting by ensuring minimum delay between Steam API calls.
+     * Uses a static lock to coordinate across all instances of the client.
+     * 
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    private void enforceRateLimit() throws InterruptedException {
+        rateLimitLock.lock();
+        try {
+            Instant now = Instant.now();
+            Duration timeSinceLastCall = Duration.between(lastApiCall, now);
+            
+            if (timeSinceLastCall.compareTo(RATE_LIMIT_DELAY) < 0) {
+                Duration waitTime = RATE_LIMIT_DELAY.minus(timeSinceLastCall);
+                log.debug("Rate limiting: waiting {} ms before next Steam API call", waitTime.toMillis());
+                Thread.sleep(waitTime.toMillis());
+            }
+            
+            lastApiCall = Instant.now();
+        } finally {
+            rateLimitLock.unlock();
+        }
+    }
+    
+    /**
      * Retrieves a Steam user's inventory items for TF2.
      * Uses retry logic to handle transient failures and Steam API rate limits.
      * 
@@ -141,6 +174,7 @@ public class SteamApi {
     
     /**
      * Performs the actual Steam API call without retry logic.
+     * Enforces rate limiting before making the call.
      * 
      * @param steamId The Steam ID of the user
      * @return SteamInventoryResponse containing the inventory data
@@ -150,6 +184,9 @@ public class SteamApi {
      */
     private SteamInventoryResponse performInventoryApiCall(String steamId) 
             throws IOException, InterruptedException, URISyntaxException {
+        
+        // Enforce rate limiting before making the call
+        enforceRateLimit();
         
         // Build the request URL with required parameters
         String url = STEAM_API_BASE_URL.replace("{appid}", String.valueOf(TF2_APPID)) +
@@ -170,7 +207,7 @@ public class SteamApi {
         
         // Handle different HTTP status codes
         if (response.statusCode() == 429) {
-            throw new IOException("Rate limited by Steam API (status 429)");
+            throw new IOException("Rate limited by Steam API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
             throw new IOException(String.format(
                     "Steam API server error (status %d): %s", 
