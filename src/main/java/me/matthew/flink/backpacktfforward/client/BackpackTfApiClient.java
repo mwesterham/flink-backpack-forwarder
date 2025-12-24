@@ -107,16 +107,19 @@ public class BackpackTfApiClient {
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofMillis(500))
-                .withMaxRetries(5) // Increased retries for rate limiting
+                .withMaxRetries(-1) // Infinite retries
                 .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
                 .onRetry(e -> {
-                    log.warn("BackpackTF API retry (attempt {}): {}", 
-                            e.getAttemptCount(), 
-                            e.getLastException().getMessage());
+                    if (e.getAttemptCount() > 10) {
+                        log.warn("BackpackTF snapshot API retry attempt {} (EXCESSIVE): {}. This may indicate persistent API issues.", 
+                                e.getAttemptCount(), 
+                                e.getLastException().getMessage());
+                    } else {
+                        log.debug("BackpackTF snapshot API retry (attempt {}): {}", 
+                                e.getAttemptCount(), 
+                                e.getLastException().getMessage());
+                    }
                 })
-                .onRetriesExceeded(e -> 
-                        log.error("Max BackpackTF API retries exceeded", e.getException())
-                )
                 .build();
     }
     
@@ -131,16 +134,19 @@ public class BackpackTfApiClient {
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofMillis(500))
-                .withMaxRetries(5) // Increased retries for rate limiting
+                .withMaxRetries(-1) // Infinite retries
                 .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
                 .onRetry(e -> {
-                    log.warn("BackpackTF getListing API retry (attempt {}): {}", 
-                            e.getAttemptCount(), 
-                            e.getLastException().getMessage());
+                    if (e.getAttemptCount() > 10) {
+                        log.warn("BackpackTF getListing API retry attempt {} (EXCESSIVE): {}. This may indicate persistent API issues.", 
+                                e.getAttemptCount(), 
+                                e.getLastException().getMessage());
+                    } else {
+                        log.debug("BackpackTF getListing API retry (attempt {}): {}", 
+                                e.getAttemptCount(), 
+                                e.getLastException().getMessage());
+                    }
                 })
-                .onRetriesExceeded(e -> 
-                        log.error("Max BackpackTF getListing API retries exceeded", e.getException())
-                )
                 .build();
     }
     

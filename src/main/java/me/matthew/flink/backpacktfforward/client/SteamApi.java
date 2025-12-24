@@ -88,7 +88,8 @@ public class SteamApi {
     }
     
     /**
-     * Creates a retry policy for Steam API calls with exponential backoff for rate limiting.
+     * Creates a retry policy for Steam API calls with infinite retries and exponential backoff.
+     * Logs warnings when retry attempts exceed 10.
      * 
      * @return RetryPolicy configured for Steam API operations
      */
@@ -98,16 +99,19 @@ public class SteamApi {
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofSeconds(1))
-                .withMaxRetries(5) // Increased retries for rate limiting
+                .withMaxRetries(-1) // Infinite retries
                 .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
                 .onRetry(e -> {
-                    log.warn("Steam API retry (attempt {}): {}", 
-                            e.getAttemptCount(), 
-                            e.getLastException().getMessage());
+                    if (e.getAttemptCount() > 10) {
+                        log.warn("Steam API retry attempt {} (EXCESSIVE): {}. This may indicate persistent API issues.", 
+                                e.getAttemptCount(), 
+                                e.getLastException().getMessage());
+                    } else {
+                        log.debug("Steam API retry (attempt {}): {}", 
+                                e.getAttemptCount(), 
+                                e.getLastException().getMessage());
+                    }
                 })
-                .onRetriesExceeded(e -> 
-                        log.error("Max Steam API retries exceeded", e.getException())
-                )
                 .build();
     }
     
