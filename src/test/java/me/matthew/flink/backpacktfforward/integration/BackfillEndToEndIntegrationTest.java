@@ -44,14 +44,34 @@ class BackfillEndToEndIntegrationTest {
         // Create processor with test database configuration
         processor = new BackfillProcessor("jdbc:h2:mem:test", "test", "test");
         
-        // Initialize the processor (this calls open() which sets up dependencies)
-        // We'll override the dependencies after initialization
+        // Mock the Flink runtime context to avoid NPE with metrics
+        org.apache.flink.api.common.functions.RuntimeContext mockRuntimeContext = 
+            mock(org.apache.flink.api.common.functions.RuntimeContext.class);
+        org.apache.flink.metrics.groups.OperatorMetricGroup mockMetricGroup = 
+            mock(org.apache.flink.metrics.groups.OperatorMetricGroup.class);
+        org.apache.flink.metrics.Counter mockCounter = 
+            mock(org.apache.flink.metrics.Counter.class);
+        
+        when(mockRuntimeContext.getMetricGroup()).thenReturn(mockMetricGroup);
+        when(mockMetricGroup.counter(anyString())).thenReturn(mockCounter);
+        when(mockMetricGroup.gauge(anyString(), any())).thenReturn(null);
+        
+        // Inject the mock runtime context using reflection
+        try {
+            var runtimeContextField = org.apache.flink.api.common.functions.AbstractRichFunction.class
+                .getDeclaredField("runtimeContext");
+            runtimeContextField.setAccessible(true);
+            runtimeContextField.set(processor, mockRuntimeContext);
+        } catch (Exception e) {
+            log.warn("Failed to inject mock runtime context: {}", e.getMessage());
+        }
+        
+        // Initialize the processor (this should now work with mocked runtime context)
         try {
             processor.open(new org.apache.flink.configuration.Configuration());
         } catch (Exception e) {
-            // Expected to fail due to missing environment variables, but that's OK
-            // We'll inject our mocks next
-            log.debug("Expected initialization failure: {}", e.getMessage());
+            // If it still fails, we'll inject mocks manually
+            log.debug("Processor initialization failed, will inject mocks: {}", e.getMessage());
         }
         
         // Inject mocks using reflection
