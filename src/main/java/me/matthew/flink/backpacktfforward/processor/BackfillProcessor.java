@@ -3,11 +3,17 @@ package me.matthew.flink.backpacktfforward.processor;
 import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
+import me.matthew.flink.backpacktfforward.client.SteamApi;
 import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 import me.matthew.flink.backpacktfforward.model.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
+import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
+import me.matthew.flink.backpacktfforward.model.InventoryItem;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
+import me.matthew.flink.backpacktfforward.model.SourceOfTruthListing;
+import me.matthew.flink.backpacktfforward.model.SteamInventoryResponse;
 import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
+import me.matthew.flink.backpacktfforward.util.ListingUpdateMapper;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
@@ -17,16 +23,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
- * Flink processor that handles backfill requests by fetching data from the backpack.tf API
- * and emitting ListingUpdate events for both new/updated listings and stale data deletion.
+ * Flink processor that handles backfill requests using the new Steam integration approach.
  * 
- * This processor:
- * 1. Uses DatabaseHelper to query for market_name using item identifiers
- * 2. Calls the backpack.tf API to fetch current listings
- * 3. Maps API response to ListingUpdate objects
- * 4. Uses DatabaseHelper to identify stale listings and emits delete events
+ * This processor implements a 7-step data flow:
+ * 1. Query database for ALL rows matching defindex/quality combination
+ * 2. Fetch BackpackTF market data using market name
+ * 3. Scan Steam user inventories for matching items
+ * 4. Match items by defindex and quality
+ * 5. Retrieve detailed listing data via getListing API
+ * 6. Detect stale data by comparing database with source of truth
+ * 7. Generate ListingUpdate events for updates and deletes
+ * 
+ * The new approach addresses the missing ID issue by using Steam inventory scanning
+ * to correlate BackpackTF listings with actual Steam items, then using the getListing
+ * API to retrieve complete listing data with proper IDs.
  */
 @Slf4j
 public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, ListingUpdate> {
@@ -37,6 +50,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
     
     private transient DatabaseHelper databaseHelper;
     private transient BackpackTfApiClient apiClient;
+    private transient SteamApi steamApi;
     
     /**
      * Creates a new BackfillProcessor with database connection parameters.
@@ -68,7 +82,10 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         // Initialize API client
         apiClient = new BackpackTfApiClient();
         
-        log.info("BackfillProcessor initialized with DatabaseHelper and API client");
+        // Initialize Steam API client
+        steamApi = new SteamApi();
+        
+        log.info("BackfillProcessor initialized with DatabaseHelper, BackpackTF API client, and Steam API client");
     }
     
     @Override
@@ -77,17 +94,22 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 request.getItemDefindex(), request.getItemQualityId());
         
         try {
-            // Step 1: Query database for market_name using DatabaseHelper
-            String marketName = null;
+            // Step 1: Query database for ALL rows matching defindex/quality combination
+            List<DatabaseHelper.ExistingListing> allDbListings = null;
             try {
-                marketName = databaseHelper.getMarketName(request.getItemDefindex(), request.getItemQualityId());
+                allDbListings = databaseHelper.getAllListingsForItem(request.getItemDefindex(), request.getItemQualityId());
+                log.debug("Found {} existing database listings for item_defindex={}, item_quality_id={}", 
+                        allDbListings != null ? allDbListings.size() : 0, 
+                        request.getItemDefindex(), request.getItemQualityId());
             } catch (Exception e) {
-                log.error("Database error while querying market_name for item_defindex={}, item_quality_id={}: {}. " +
+                log.error("Database error while querying all listings for item_defindex={}, item_quality_id={}: {}. " +
                          "Skipping backfill request to prevent job failure.", 
                          request.getItemDefindex(), request.getItemQualityId(), e.getMessage(), e);
                 return; // Skip this request but continue processing others
             }
             
+            // Get market name from database listings (needed for BackpackTF API call)
+            String marketName = getMarketNameFromDbListings(allDbListings);
             if (marketName == null) {
                 log.warn("No market_name found for item_defindex={}, item_quality_id={}. " +
                         "This may indicate missing reference data in the database.", 
@@ -95,63 +117,121 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 return;
             }
             
-            log.debug("Found market_name: {} for item_defindex={}, item_quality_id={}", 
-                    marketName, request.getItemDefindex(), request.getItemQualityId());
+            log.debug("Using market_name: {} for BackpackTF API call", marketName);
             
-            // Step 2: Call backpack.tf API with error handling
+            // Step 2: Query BackpackTF API with market name to get source of truth listings
             BackpackTfApiResponse apiResponse = null;
             try {
                 apiResponse = apiClient.fetchSnapshot(marketName, 440);
+                log.debug("BackpackTF API returned {} listings for market_name: {}", 
+                        apiResponse != null && apiResponse.getListings() != null ? apiResponse.getListings().size() : 0, 
+                        marketName);
             } catch (Exception e) {
-                log.error("API error while fetching snapshot for market_name={}, item_defindex={}, item_quality_id={}: {}. " +
+                log.error("BackpackTF API error while fetching snapshot for market_name={}, item_defindex={}, item_quality_id={}: {}. " +
                          "Skipping entire backfill request due to API failure.", 
                          marketName, request.getItemDefindex(), request.getItemQualityId(), e.getMessage(), e);
-                
-                // Complete no-op when API fails - skip both API processing and stale data deletion
-                return;
+                return; // Skip this request but continue processing others
             }
             
             if (apiResponse == null) {
-                log.warn("API returned null response for market_name: {}. Skipping entire backfill request.", marketName);
-                // Complete no-op when API returns null
-                return;
+                log.warn("BackpackTF API returned null response for market_name: {}. " +
+                        "Performing complete no-op - no updates or deletes will be processed.", marketName);
+                return; // Complete no-op when API returns null
             }
             
             if (apiResponse.getListings() == null || apiResponse.getListings().isEmpty()) {
-                log.info("No listings returned from API for market_name: {}. Skipping entire backfill request.", marketName);
-                // Complete no-op when no listings are returned
+                log.info("No listings returned from BackpackTF API for market_name: {}. " +
+                        "Proceeding with stale data detection only.", marketName);
+                // Still need to handle stale data detection when API returns empty listings
+                handleStaleDataDetection(allDbListings, new ArrayList<>(), out);
                 return;
             }
             
-            log.debug("API returned {} listings for market_name: {}", 
-                    apiResponse.getListings().size(), marketName);
+            // Step 3-5: Process each BackpackTF listing through Steam inventory scan and getListing API
+            List<SourceOfTruthListing> sourceOfTruthListings = new ArrayList<>();
             
-            // Step 3: Process API listings and emit update events with error handling
-            List<String> apiSteamIds = new ArrayList<>();
             for (BackpackTfApiResponse.ApiListing apiListing : apiResponse.getListings()) {
                 try {
-                    ListingUpdate updateEvent = mapApiListingToListingUpdate(apiListing, marketName);
-                    out.collect(updateEvent);
-                    apiSteamIds.add(apiListing.getSteamid());
-                } catch (Exception mappingException) {
-                    log.error("Error mapping API listing to ListingUpdate for steamid={}, market_name={}: {}. " +
-                             "Skipping this listing but continuing with others.", 
-                             apiListing != null ? apiListing.getSteamid() : "null", 
-                             marketName, mappingException.getMessage(), mappingException);
+                    // Step 3: Use SteamApi to scan inventory for matching items
+                    SteamInventoryResponse inventory = null;
+                    try {
+                        inventory = steamApi.getPlayerItems(apiListing.getSteamid());
+                        log.debug("Steam API returned inventory for steamid: {} with {} items", 
+                                apiListing.getSteamid(), 
+                                inventory != null && inventory.getResult() != null && inventory.getResult().getItems() != null 
+                                        ? inventory.getResult().getItems().size() : 0);
+                    } catch (Exception steamError) {
+                        log.warn("Steam API error for steamid={}: {}. Skipping this listing but continuing with others.", 
+                                apiListing.getSteamid(), steamError.getMessage());
+                        continue; // Skip this listing but continue processing others
+                    }
+                    
+                    if (inventory == null || inventory.getResult() == null || inventory.getResult().getItems() == null) {
+                        log.debug("No inventory data available for steamid: {}. Skipping this listing.", 
+                                apiListing.getSteamid());
+                        continue;
+                    }
+                    
+                    // Step 4: Match items by defindex and quality
+                    List<InventoryItem> matchingItems = steamApi.findMatchingItems(
+                            inventory, request.getItemDefindex(), request.getItemQualityId());
+                    
+                    log.debug("Found {} matching items in inventory for steamid: {}, defindex: {}, quality: {}", 
+                            matchingItems.size(), apiListing.getSteamid(), 
+                            request.getItemDefindex(), request.getItemQualityId());
+                    
+                    // Step 5: For each matching item, call getListing API to get complete data
+                    for (InventoryItem matchingItem : matchingItems) {
+                        try {
+                            BackpackTfListingDetail listingDetail = 
+                                    apiClient.getListing(String.valueOf(matchingItem.getId()));
+                            
+                            if (listingDetail != null && listingDetail.getId() != null) {
+                                // Create source of truth entry with complete data
+                                SourceOfTruthListing sotListing = new SourceOfTruthListing(
+                                        apiListing, matchingItem, listingDetail);
+                                sourceOfTruthListings.add(sotListing);
+                                
+                                log.debug("Successfully created source of truth listing for item ID: {}, listing ID: {}", 
+                                        matchingItem.getId(), listingDetail.getId());
+                            } else {
+                                log.warn("getListing API returned null or incomplete data for item ID: {}. Skipping this item.", 
+                                        matchingItem.getId());
+                            }
+                        } catch (Exception getListingError) {
+                            log.warn("getListing API error for item ID {}: {}. Skipping this item but continuing with others.", 
+                                    matchingItem.getId(), getListingError.getMessage());
+                            // Continue processing other items
+                        }
+                    }
+                    
+                } catch (Exception listingProcessingError) {
+                    log.error("Error processing API listing for steamid={}: {}. Skipping this listing but continuing with others.", 
+                            apiListing.getSteamid(), listingProcessingError.getMessage(), listingProcessingError);
                     // Continue processing other listings
                 }
             }
             
-            // Step 4: Handle stale data deletion using DatabaseHelper with error handling
-            try {
-                handleStaleDataDeletion(request.getItemDefindex(), request.getItemQualityId(), 
-                        apiSteamIds, out);
-            } catch (Exception staleDataException) {
-                log.error("Database error during stale data deletion for item_defindex={}, item_quality_id={}: {}. " +
-                         "Stale data may not be properly cleaned up for this request.", 
-                         request.getItemDefindex(), request.getItemQualityId(), staleDataException.getMessage(), staleDataException);
-                // Don't rethrow - we've already processed the API data successfully
+            log.info("Successfully processed {} source of truth listings for item_defindex={}, item_quality_id={}", 
+                    sourceOfTruthListings.size(), request.getItemDefindex(), request.getItemQualityId());
+            
+            // Step 6: Generate listing-update events for source of truth
+            for (SourceOfTruthListing sotListing : sourceOfTruthListings) {
+                try {
+                    ListingUpdate updateEvent = ListingUpdateMapper.mapToListingUpdate(sotListing);
+                    out.collect(updateEvent);
+                    log.debug("Emitted listing-update event for listing ID: {}, intent: {}", 
+                            sotListing.getActualListingId(), sotListing.getIntent());
+                } catch (Exception mappingError) {
+                    log.error("Error mapping source of truth listing to ListingUpdate for listing ID {}: {}. " +
+                             "Skipping this update but continuing with others.", 
+                             sotListing.getActualListingId(), mappingError.getMessage(), mappingError);
+                    // Continue processing other listings
+                }
             }
+            
+            // Step 7: Detect stale data and generate listing-delete events
+            handleStaleDataDetection(allDbListings, sourceOfTruthListings, out);
             
         } catch (Exception e) {
             log.error("Unexpected error processing backfill request for item_defindex={}, item_quality_id={}: {}. " +
@@ -162,234 +242,76 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
     }
     
     /**
-     * Queries existing listings using DatabaseHelper and identifies stale listings that should be deleted.
+     * Extracts market name from database listings.
      * 
-     * @param itemDefindex Item definition index
-     * @param itemQualityId Item quality ID
-     * @param apiSteamIds List of Steam IDs from the API response
-     * @param out Collector to emit delete events
-     * @throws Exception if database query fails
+     * @param allDbListings List of existing database listings
+     * @return market name if available, null otherwise
      */
-    private void handleStaleDataDeletion(int itemDefindex, int itemQualityId, 
-            List<String> apiSteamIds, Collector<ListingUpdate> out) throws Exception {
-        
-        List<DatabaseHelper.ExistingListing> existingListings;
-        try {
-            existingListings = databaseHelper.getExistingListings(itemDefindex, itemQualityId);
-        } catch (Exception e) {
-            log.error("Database error while querying existing listings for item_defindex={}, item_quality_id={}: {}. " +
-                     "Stale data detection will be skipped for this request.", 
-                     itemDefindex, itemQualityId, e.getMessage(), e);
-            throw e; // Rethrow to let caller handle appropriately
+    private String getMarketNameFromDbListings(List<DatabaseHelper.ExistingListing> allDbListings) {
+        if (allDbListings == null || allDbListings.isEmpty()) {
+            return null;
         }
         
-        if (existingListings == null || existingListings.isEmpty()) {
-            log.debug("No existing listings found in database for item_defindex={}, item_quality_id={}", 
-                     itemDefindex, itemQualityId);
+        // Get market name from the first listing (all should have the same market name for the same defindex/quality)
+        return allDbListings.get(0).getMarketName();
+    }
+    
+    /**
+     * Handles stale data detection by comparing database listings with source of truth listings.
+     * Generates ListingUpdate objects with event="listing-delete" for stale data.
+     * 
+     * @param allDbListings All database listings for the item combination
+     * @param sourceOfTruthListings Complete source of truth dataset from APIs
+     * @param out Collector to emit delete events
+     */
+    private void handleStaleDataDetection(List<DatabaseHelper.ExistingListing> allDbListings, 
+            List<SourceOfTruthListing> sourceOfTruthListings, Collector<ListingUpdate> out) {
+        
+        if (allDbListings == null || allDbListings.isEmpty()) {
+            log.debug("No existing database listings found, no stale data to detect");
             return;
         }
         
-        Set<String> apiSteamIdSet = new HashSet<>(apiSteamIds);
+        // Create set of actual listing IDs from source of truth for efficient lookup
+        Set<String> sourceOfTruthIds = sourceOfTruthListings.stream()
+                .map(SourceOfTruthListing::getActualListingId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+        
+        log.debug("Comparing {} database listings against {} source of truth listings", 
+                allDbListings.size(), sourceOfTruthIds.size());
+        
         int staleListingsCount = 0;
         
-        for (DatabaseHelper.ExistingListing existingListing : existingListings) {
+        for (DatabaseHelper.ExistingListing dbListing : allDbListings) {
             try {
-                // If this listing's steamid is not in the API response, it's stale
-                if (!apiSteamIdSet.contains(existingListing.getSteamid())) {
-                    ListingUpdate deleteEvent = createDeleteEvent(existingListing.getId(), existingListing.getSteamid());
+                // If this database listing's ID is not in the source of truth, it's stale
+                if (!sourceOfTruthIds.contains(dbListing.getId())) {
+                    ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteEvent(
+                            dbListing.getId(), dbListing.getSteamid());
                     out.collect(deleteEvent);
                     staleListingsCount++;
                     log.debug("Emitting delete event for stale listing: id={}, steamid={}", 
-                            existingListing.getId(), existingListing.getSteamid());
+                            dbListing.getId(), dbListing.getSteamid());
                 }
             } catch (Exception e) {
                 log.error("Error creating delete event for stale listing id={}, steamid={}: {}. " +
                          "This stale listing will not be deleted.", 
-                         existingListing.getId(), existingListing.getSteamid(), e.getMessage(), e);
+                         dbListing.getId(), dbListing.getSteamid(), e.getMessage(), e);
                 // Continue processing other stale listings
             }
         }
         
         if (staleListingsCount > 0) {
-            log.info("Identified {} stale listings for deletion for item_defindex={}, item_quality_id={}", 
-                    staleListingsCount, itemDefindex, itemQualityId);
+            log.info("Identified {} stale listings for deletion", staleListingsCount);
+        } else {
+            log.debug("No stale listings identified for deletion");
         }
-    }
-    
-    /**
-     * Creates a ListingUpdate event for deleting a stale listing.
-     * 
-     * @param listingId The ID of the listing to delete
-     * @param steamId The Steam ID associated with the listing
-     * @return ListingUpdate with event="listing-delete"
-     */
-    private ListingUpdate createDeleteEvent(String listingId, String steamId) {
-        ListingUpdate deleteEvent = new ListingUpdate();
-        deleteEvent.setEvent("listing-delete");
-        deleteEvent.setId(UUID.randomUUID().toString());
-        
-        ListingUpdate.Payload payload = new ListingUpdate.Payload();
-        payload.setId(listingId);
-        payload.setSteamid(steamId);
-        
-        deleteEvent.setPayload(payload);
-        
-        return deleteEvent;
-    }
-    
-    /**
-     * Maps an API listing to a ListingUpdate object with event="listing-update".
-     * 
-     * @param apiListing The API listing to map
-     * @param marketName The market name for the item
-     * @return ListingUpdate object ready for database persistence
-     * @throws IllegalArgumentException if required fields are missing or invalid
-     */
-    private ListingUpdate mapApiListingToListingUpdate(BackpackTfApiResponse.ApiListing apiListing, 
-            String marketName) {
-        
-        if (apiListing == null) {
-            throw new IllegalArgumentException("API listing cannot be null");
-        }
-        
-        if (apiListing.getSteamid() == null || apiListing.getSteamid().trim().isEmpty()) {
-            throw new IllegalArgumentException("API listing must have a valid steamid");
-        }
-        
-        if (marketName == null || marketName.trim().isEmpty()) {
-            throw new IllegalArgumentException("Market name cannot be null or empty");
-        }
-        
-        try {
-            ListingUpdate listingUpdate = new ListingUpdate();
-            listingUpdate.setEvent("listing-update");
-            listingUpdate.setId(UUID.randomUUID().toString());
-            
-            ListingUpdate.Payload payload = new ListingUpdate.Payload();
-            
-            // Map basic listing information
-            // Try to get existing listing ID from database, generate if not found
-            String listingId = getOrGenerateListingId(apiListing, marketName);
-            payload.setId(listingId);
-            payload.setSteamid(apiListing.getSteamid());
-            payload.setAppid(440); // TF2 app ID
-            payload.setIntent(apiListing.getIntent() != null ? apiListing.getIntent() : "unknown");
-            payload.setDetails(apiListing.getDetails());
-            
-            // Map timestamps - API uses seconds, ListingUpdate expects seconds
-            payload.setListedAt(apiListing.getTimestamp());
-            payload.setBumpedAt(apiListing.getBump() != null ? apiListing.getBump() : apiListing.getTimestamp());
-            
-            // Map currencies with null safety
-            if (apiListing.getCurrencies() != null) {
-                ListingUpdate.Currencies currencies = new ListingUpdate.Currencies();
-                currencies.setKeys(apiListing.getCurrencies().getKeys());
-                currencies.setMetal(apiListing.getCurrencies().getMetal());
-                payload.setCurrencies(currencies);
-            }
-            
-            // Map item information with null safety
-            if (apiListing.getItem() != null) {
-                ListingUpdate.Item item = new ListingUpdate.Item();
-                item.setAppid(440);
-                item.setDefindex(apiListing.getItem().getDefindex());
-                item.setMarketName(marketName);
-                
-                // Map item quality with null safety
-                ListingUpdate.Quality quality = new ListingUpdate.Quality();
-                quality.setId(apiListing.getItem().getQuality());
-                item.setQuality(quality);
-                
-                payload.setItem(item);
-            } else {
-                log.warn("API listing has null item information for steamid={}, using defaults", apiListing.getSteamid());
-                // Create minimal item information
-                ListingUpdate.Item item = new ListingUpdate.Item();
-                item.setAppid(440);
-                item.setMarketName(marketName);
-                payload.setItem(item);
-            }
-            
-            // Map user agent information with null safety
-            if (apiListing.getUserAgent() != null) {
-                ListingUpdate.UserAgent userAgent = new ListingUpdate.UserAgent();
-                userAgent.setClient(apiListing.getUserAgent().getClient());
-                userAgent.setLastPulse(apiListing.getUserAgent().getLastPulse() != null ? 
-                        apiListing.getUserAgent().getLastPulse() : 0);
-                payload.setUserAgent(userAgent);
-            }
-            
-            // Set default values for required fields
-            payload.setStatus("active"); // Default status for API listings
-            payload.setSource("backpack.tf"); // Identify source as API
-            
-            listingUpdate.setPayload(payload);
-            
-            return listingUpdate;
-            
-        } catch (Exception e) {
-            log.error("Error mapping API listing to ListingUpdate for steamid={}, market_name={}: {}", 
-                     apiListing.getSteamid(), marketName, e.getMessage(), e);
-            throw new RuntimeException("Failed to map API listing to ListingUpdate", e);
-        }
-    }
-    
-    /**
-     * Gets the real listing ID from database by querying market_name/steamId combination,
-     * or generates a new one if it doesn't exist.
-     * 
-     * @param apiListing The API listing
-     * @param marketName The market name for the item
-     * @return Existing listing ID from database or generated ID if not found
-     */
-    private String getOrGenerateListingId(BackpackTfApiResponse.ApiListing apiListing, String marketName) {
-        try {
-            // First try to get existing listing ID from database
-            String existingId = databaseHelper.getExistingListingId(marketName, apiListing.getSteamid());
-            if (existingId != null) {
-                log.debug("Using existing listing ID: {} for market_name={}, steamid={}", 
-                        existingId, marketName, apiListing.getSteamid());
-                return existingId;
-            }
-            
-            // If no existing ID found, generate a new one
-            String generatedId = generateListingId(apiListing, marketName);
-            log.debug("Generated new listing ID: {} for market_name={}, steamid={}", 
-                    generatedId, marketName, apiListing.getSteamid());
-            return generatedId;
-            
-        } catch (Exception e) {
-            log.warn("Error querying existing listing ID for market_name={}, steamid={}: {}. " +
-                    "Falling back to generated ID.", marketName, apiListing.getSteamid(), e.getMessage());
-            // Fallback to generated ID if database query fails
-            return generateListingId(apiListing, marketName);
-        }
-    }
-    
-    /**
-     * Generates a unique listing ID for API listings since the API doesn't provide IDs.
-     * Uses a combination of steamid, defindex, quality, and timestamp to create a unique identifier.
-     * 
-     * @param apiListing The API listing
-     * @param marketName The market name for the item
-     * @return A unique listing ID
-     */
-    private String generateListingId(BackpackTfApiResponse.ApiListing apiListing, String marketName) {
-        // Create a deterministic ID based on listing characteristics
-        // This ensures the same listing gets the same ID across multiple API calls
-        String baseId = String.format("%s_%d_%d_%d", 
-                apiListing.getSteamid(),
-                apiListing.getItem() != null ? apiListing.getItem().getDefindex() : 0,
-                apiListing.getItem() != null ? apiListing.getItem().getQuality() : 0,
-                apiListing.getTimestamp());
-        
-        // Use a hash to create a shorter, more manageable ID
-        return "api_" + Math.abs(baseId.hashCode());
     }
     
     @Override
     public void close() throws Exception {
-        // DatabaseHelper manages its own connections, no cleanup needed
+        // DatabaseHelper and API clients manage their own connections, no cleanup needed
         super.close();
     }
 }
