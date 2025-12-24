@@ -19,7 +19,7 @@ public class SteamApiConfiguration {
     
     // Default values
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
-    private static final int DEFAULT_RATE_LIMIT_SECONDS = 10; // 6 requests per minute = 10 seconds between requests
+    private static final int DEFAULT_RATE_LIMIT_SECONDS = 15; // More conservative: 4 requests per minute during issues
 
     /**
      * Reads Steam API key from environment variable.

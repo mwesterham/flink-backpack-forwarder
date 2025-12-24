@@ -33,7 +33,6 @@ public class SteamApi {
     
     private static final String STEAM_API_BASE_URL = "http://api.steampowered.com/IEconItems_{appid}/GetPlayerItems/v0001/";
     private static final int TF2_APPID = 440;
-    private static final Duration TIMEOUT = Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds());
     
     // Rate limiting: configurable delay between requests (default 10 seconds for 6 requests per minute)
     private static final Duration RATE_LIMIT_DELAY = Duration.ofSeconds(SteamApiConfiguration.getSteamApiRateLimitSeconds());
@@ -75,7 +74,7 @@ public class SteamApi {
     }
     
     /**
-     * Creates a retry policy for Steam API calls with infinite retries and exponential backoff.
+     * Creates a retry policy for Steam API calls with limited retries and exponential backoff.
      * Logs warnings when retry attempts exceed 10.
      * 
      * @return RetryPolicy configured for Steam API operations
@@ -85,9 +84,9 @@ public class SteamApi {
                 .handle(IOException.class)
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
-                .withDelay(Duration.ofSeconds(1))
-                .withMaxRetries(-1) // Infinite retries
-                .withBackoff(Duration.ofSeconds(1), Duration.ofMinutes(2)) // Longer backoff for rate limits
+                .withDelay(Duration.ofSeconds(2))
+                .withMaxRetries(15) // Limited retries to prevent infinite loops
+                .withBackoff(Duration.ofSeconds(2), Duration.ofMinutes(5)) // Longer max backoff for severe issues
                 .onRetry(e -> {
                     if (e.getAttemptCount() > 10) {
                         log.warn("Steam API retry attempt {} (EXCESSIVE): {}. This may indicate persistent API issues.", 
@@ -98,6 +97,11 @@ public class SteamApi {
                                 e.getAttemptCount(), 
                                 e.getLastException().getMessage());
                     }
+                })
+                .onFailure(e -> {
+                    log.error("Steam API failed after {} attempts. Last error: {}", 
+                            e.getAttemptCount(), 
+                            e.getException().getMessage());
                 })
                 .build();
     }
@@ -112,6 +116,10 @@ public class SteamApi {
         if (throwable instanceof IOException) {
             String message = throwable.getMessage();
             if (message != null) {
+                // Don't retry authentication failures (401, 403) - these indicate API key issues
+                if (message.contains("status 401") || message.contains("status 403")) {
+                    return false;
+                }
                 // Retry on rate limiting (429), server errors (5xx), and timeouts
                 return message.contains("status 429") || 
                        message.contains("status 5") ||
@@ -124,6 +132,7 @@ public class SteamApi {
     /**
      * Enforces rate limiting by ensuring minimum delay between Steam API calls.
      * Uses a static lock to coordinate across all instances of the client.
+     * Increases delay during consecutive failures to be more respectful of API limits.
      * 
      * @throws InterruptedException if the thread is interrupted while waiting
      */
@@ -206,6 +215,9 @@ public class SteamApi {
                     "Steam API server error (status %d): %s", 
                     response.statusCode(), response.body()));
         } else if (response.statusCode() == 401 || response.statusCode() == 403) {
+            // Don't retry authentication failures - log and fail fast
+            log.error("Steam API authentication failed (status {}). Check API key validity and permissions. Response: {}", 
+                    response.statusCode(), response.body());
             throw new IOException("Steam API authentication failed - check API key (status " + response.statusCode() + ")");
         } else if (response.statusCode() != 200) {
             throw new IOException(String.format(
