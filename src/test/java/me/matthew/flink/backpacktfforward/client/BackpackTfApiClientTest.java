@@ -48,7 +48,7 @@ class BackpackTfApiClientTest {
     void testDefaultConstructor_WithoutEnvironmentVariable_ThrowsException() {
         // Test that default constructor throws exception when env var is not set
         // This will fail if BACKPACK_TF_API_TOKEN is actually set in the environment
-        assertThrows(IllegalStateException.class, () -> {
+        assertThrows(IllegalArgumentException.class, () -> {
             new BackpackTfApiClient();
         });
     }
