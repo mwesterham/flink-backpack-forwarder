@@ -44,6 +44,13 @@ public class DatabaseHelper {
         LIMIT 1
         """;
     
+    private static final String ALL_LISTINGS_FOR_ITEM_QUERY = """
+        SELECT id, steamid, market_name 
+        FROM listings 
+        WHERE item_defindex = ? AND item_quality_id = ? AND is_deleted = false
+        ORDER BY updated_at DESC
+        """;
+    
     private final String jdbcUrl;
     private final String username;
     private final String password;
@@ -105,10 +112,18 @@ public class DatabaseHelper {
     public static class ExistingListing {
         private final String id;
         private final String steamid;
+        private final String marketName;
         
         public ExistingListing(String id, String steamid) {
             this.id = id;
             this.steamid = steamid;
+            this.marketName = null;
+        }
+        
+        public ExistingListing(String id, String steamid, String marketName) {
+            this.id = id;
+            this.steamid = steamid;
+            this.marketName = marketName;
         }
         
         public String getId() {
@@ -118,6 +133,49 @@ public class DatabaseHelper {
         public String getSteamid() {
             return steamid;
         }
+        
+        public String getMarketName() {
+            return marketName;
+        }
+    }
+    
+    /**
+     * Queries the database for all listings matching the specified defindex/quality combination.
+     * Returns id, steamid, and market_name for all matching entries.
+     * Filters out deleted listings (is_deleted = false).
+     * Uses existing database connection patterns and retry logic.
+     * 
+     * @param itemDefindex Item definition index
+     * @param itemQualityId Item quality ID
+     * @return List of all matching listings with id, steamid, and market_name
+     * @throws SQLException if database query fails after retries
+     */
+    public List<ExistingListing> getAllListingsForItem(int itemDefindex, int itemQualityId) throws SQLException {
+        log.debug("Querying all listings for item_defindex={}, item_quality_id={}", itemDefindex, itemQualityId);
+        
+        return Failsafe.with(retryPolicy).get(() -> {
+            List<ExistingListing> allListings = new ArrayList<>();
+            
+            try (Connection connection = createConnection();
+                 PreparedStatement stmt = connection.prepareStatement(ALL_LISTINGS_FOR_ITEM_QUERY)) {
+                
+                stmt.setInt(1, itemDefindex);
+                stmt.setInt(2, itemQualityId);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        String id = rs.getString("id");
+                        String steamid = rs.getString("steamid");
+                        String marketName = rs.getString("market_name");
+                        allListings.add(new ExistingListing(id, steamid, marketName));
+                    }
+                }
+            }
+            
+            log.debug("Found {} total listings for item_defindex={}, item_quality_id={}", 
+                    allListings.size(), itemDefindex, itemQualityId);
+            return allListings;
+        });
     }
     
     /**
