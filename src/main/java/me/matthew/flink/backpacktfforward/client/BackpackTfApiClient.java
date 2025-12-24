@@ -30,7 +30,7 @@ import java.util.concurrent.locks.ReentrantLock;
 public class BackpackTfApiClient {
     
     private static final String API_BASE_URL = "https://backpack.tf/api/classifieds/listings/snapshot";
-    private static final String GET_LISTING_BASE_URL = "https://backpack.tf/api/classifieds/listings";
+    private static final String GET_LISTING_BASE_URL = "https://backpack.tf/api/v2/classifieds/listings";
     private static final String USER_AGENT = "TF2Autobot-Snapshot-Ingest";
     
     // Rate limiting: Different limits for different endpoints (configurable)
@@ -324,13 +324,13 @@ public class BackpackTfApiClient {
         // Enforce getListing API rate limiting before making the call (60/min = 1s delay)
         enforceGetListingRateLimit();
         
-        // Build the request URL for getListing endpoint
-        String url = String.format("%s/%s", GET_LISTING_BASE_URL, itemId);
+        // Build the request URL for getListing endpoint with query parameters
+        String url = String.format("%s/%s?src=bptf&appid=440&token=%s", 
+                GET_LISTING_BASE_URL, itemId, apiToken);
         
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI(url))
                 .header("User-Agent", USER_AGENT)
-                .header("Authorization", "Bearer " + apiToken)
                 .timeout(Duration.ofSeconds(BackpackTfApiConfiguration.getApiTimeoutSeconds()))
                 .GET()
                 .build();

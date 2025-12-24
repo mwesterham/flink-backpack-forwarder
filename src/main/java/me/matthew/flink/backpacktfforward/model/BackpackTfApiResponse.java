@@ -134,7 +134,7 @@ public class BackpackTfApiResponse {
         /**
          * Number of keys in the price
          */
-        private Integer keys;
+        private Long keys;
         
         /**
          * Amount of metal in the price

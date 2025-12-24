@@ -157,7 +157,17 @@ public class ListingUpdateMapper {
         // Extract keys value
         Object keysValue = currencies.get("keys");
         if (keysValue instanceof Number) {
-            mappedCurrencies.setKeys(((Number) keysValue).intValue());
+            long keysLong = ((Number) keysValue).longValue();
+            // Cap extremely large values that would overflow database INT column
+            if (keysLong > Integer.MAX_VALUE) {
+                log.warn("Keys value {} exceeds INT range, capping to MAX_VALUE", keysLong);
+                mappedCurrencies.setKeys((long) Integer.MAX_VALUE);
+            } else if (keysLong < Integer.MIN_VALUE) {
+                log.warn("Keys value {} below INT range, capping to MIN_VALUE", keysLong);
+                mappedCurrencies.setKeys((long) Integer.MIN_VALUE);
+            } else {
+                mappedCurrencies.setKeys(keysLong);
+            }
         }
         
         return mappedCurrencies;

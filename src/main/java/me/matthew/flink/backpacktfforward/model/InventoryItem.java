@@ -35,7 +35,7 @@ public class InventoryItem {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ItemAttribute {
         private int defindex;           // Attribute definition index
-        private long value;             // Attribute value (integer)
+        private String value;           // Attribute value (string)
         @JsonProperty("float_value")
         private Float floatValue;       // Attribute value (float)
     }

@@ -1,5 +1,6 @@
 package me.matthew.flink.backpacktfforward.client;
 
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
@@ -83,6 +84,7 @@ public class SteamApi {
         return RetryPolicy.<SteamInventoryResponse>builder()
                 .handle(IOException.class)
                 .handle(HttpTimeoutException.class)
+                .handle(JsonParseException.class) // Handle JSON parsing failures
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofSeconds(2))
                 .withMaxRetries(15) // Limited retries to prevent infinite loops
@@ -113,6 +115,12 @@ public class SteamApi {
      * @return true if the error should be retried
      */
     private boolean isRetryableHttpError(Throwable throwable) {
+        // Handle JSON parsing exceptions - these are often due to corrupted responses
+        if (throwable instanceof JsonParseException) {
+            log.warn("JSON parsing failed, likely due to corrupted Steam API response: {}", throwable.getMessage());
+            return true; // Retry JSON parsing failures
+        }
+        
         if (throwable instanceof IOException) {
             String message = throwable.getMessage();
             if (message != null) {
@@ -120,11 +128,12 @@ public class SteamApi {
                 if (message.contains("status 401") || message.contains("status 403")) {
                     return false;
                 }
-                // Retry on rate limiting (429), server errors (5xx), and timeouts
+                // Retry on rate limiting (429), server errors (5xx), timeouts, and parsing failures
                 return message.contains("status 429") || 
                        message.contains("status 503") ||  // Service unavailable - common with Steam API
                        message.contains("status 5") ||
-                       message.contains("timeout");
+                       message.contains("timeout") ||
+                       message.contains("Failed to parse Steam API response"); // Our custom parsing error
             }
         }
         return false;
@@ -199,7 +208,8 @@ public class SteamApi {
                 .timeout(Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds()))
                 .header("User-Agent", "TF2-Custom-Pricer/1.0")
                 .header("Accept", "application/json")
-                .header("Accept-Encoding", "gzip, deflate")
+                .header("Accept-Encoding", "identity") // Only accept uncompressed responses to avoid corruption
+                .header("Accept-Charset", "UTF-8")
                 .GET()
                 .build();
         
@@ -232,8 +242,13 @@ public class SteamApi {
         }
         
         try {
+            String responseBody = response.body();
+            
+            // Validate and clean the response body before parsing
+            String cleanedBody = validateAndCleanResponse(responseBody);
+            
             SteamInventoryResponse inventoryResponse = objectMapper.readValue(
-                    response.body(), SteamInventoryResponse.class);
+                    cleanedBody, SteamInventoryResponse.class);
             
             // Check if the API call was successful
             if (inventoryResponse.getResult() == null || inventoryResponse.getResult().getStatus() != 1) {
@@ -247,11 +262,83 @@ public class SteamApi {
             
             return inventoryResponse;
         } catch (Exception e) {
-            log.error("Failed to parse Steam API response: {}", response.body(), e);
+            log.error("Failed to parse Steam API response: {}", sanitizeForLogging(response.body()), e);
             throw new IOException("Failed to parse Steam API response", e);
         }
     }
     
+    /**
+     * Validates and cleans the API response body to handle corrupted data.
+     * Removes control characters and validates JSON structure.
+     * 
+     * @param responseBody The raw response body from Steam API
+     * @return Cleaned response body safe for JSON parsing
+     * @throws IOException if the response is too corrupted to recover
+     */
+    private String validateAndCleanResponse(String responseBody) throws IOException {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            throw new IOException("Steam API returned empty response");
+        }
+        
+        // Check for obvious binary corruption (control characters at the start)
+        if (responseBody.length() > 0 && responseBody.charAt(0) < 32 && responseBody.charAt(0) != '\t' && 
+            responseBody.charAt(0) != '\n' && responseBody.charAt(0) != '\r') {
+            log.warn("Steam API response starts with control character (code {}), attempting to clean", 
+                    (int) responseBody.charAt(0));
+        }
+        
+        // Remove all control characters except valid JSON whitespace
+        String cleaned = responseBody.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "");
+        
+        // Trim whitespace
+        cleaned = cleaned.trim();
+        
+        // Basic JSON structure validation
+        if (!cleaned.startsWith("{") || !cleaned.endsWith("}")) {
+            // Try to find JSON boundaries in case of prefix/suffix corruption
+            int jsonStart = cleaned.indexOf('{');
+            int jsonEnd = cleaned.lastIndexOf('}');
+            
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                log.warn("Steam API response has corrupted boundaries, extracting JSON from position {} to {}", 
+                        jsonStart, jsonEnd);
+                cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+            } else {
+                throw new IOException("Steam API response does not contain valid JSON structure. " +
+                        "Response preview: " + sanitizeForLogging(responseBody.substring(0, Math.min(200, responseBody.length()))));
+            }
+        }
+        
+        // Additional validation - check for reasonable JSON size
+        if (cleaned.length() < 10) {
+            throw new IOException("Steam API response too short to be valid JSON: " + sanitizeForLogging(cleaned));
+        }
+        
+        // Log if significant cleaning was performed
+        if (!cleaned.equals(responseBody)) {
+            log.warn("Steam API response required cleaning. Original length: {}, cleaned length: {}", 
+                    responseBody.length(), cleaned.length());
+        }
+        
+        return cleaned;
+    }
+    
+    /**
+     * Sanitizes response content for safe logging by removing control characters.
+     * 
+     * @param content The content to sanitize
+     * @return Sanitized content safe for logging
+     */
+    private String sanitizeForLogging(String content) {
+        if (content == null) {
+            return "null";
+        }
+        
+        // Replace control characters with their Unicode escape sequences for visibility
+        return content.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "�")
+                     .substring(0, Math.min(500, content.length())); // Limit length for logs
+    }
+
     /**
      * Finds all items in the inventory that match the specified defindex and quality.
      * Uses exact matching for both defindex and quality fields.

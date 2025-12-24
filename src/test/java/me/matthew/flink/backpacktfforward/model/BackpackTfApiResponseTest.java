@@ -70,7 +70,7 @@ class BackpackTfApiResponseTest {
         assertEquals("1", listing.getItem().getQuantity());
         
         assertNotNull(listing.getCurrencies());
-        assertEquals(80, listing.getCurrencies().getKeys());
+        assertEquals(Long.valueOf(80), listing.getCurrencies().getKeys());
         
         assertEquals(1766450685L, listing.getBump());
         

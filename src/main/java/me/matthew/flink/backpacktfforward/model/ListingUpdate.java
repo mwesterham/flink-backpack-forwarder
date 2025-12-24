@@ -47,7 +47,7 @@ public class ListingUpdate {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Currencies {
         public Double metal;
-        public Integer keys;
+        public Long keys;
     }
 
     @Data
