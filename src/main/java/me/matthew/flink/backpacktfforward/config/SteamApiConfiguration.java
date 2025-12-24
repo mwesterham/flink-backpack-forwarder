@@ -19,7 +19,7 @@ public class SteamApiConfiguration {
     
     // Default values
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
-    private static final int DEFAULT_RATE_LIMIT_SECONDS = 15; // More conservative: 4 requests per minute during issues
+    private static final int DEFAULT_RATE_LIMIT_SECONDS = 10; // Match Node.js behavior - 6 requests per minute
 
     /**
      * Reads Steam API key from environment variable.

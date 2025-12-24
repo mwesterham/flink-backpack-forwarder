@@ -31,8 +31,7 @@ import java.util.concurrent.locks.ReentrantLock;
 @Slf4j
 public class SteamApi {
     
-    private static final String STEAM_API_BASE_URL = "http://api.steampowered.com/IEconItems_{appid}/GetPlayerItems/v0001/";
-    private static final int TF2_APPID = 440;
+    private static final String STEAM_API_BASE_URL = "https://api.steampowered.com/IEconItems_440/GetPlayerItems/v0001/";
     
     // Rate limiting: configurable delay between requests (default 10 seconds for 6 requests per minute)
     private static final Duration RATE_LIMIT_DELAY = Duration.ofSeconds(SteamApiConfiguration.getSteamApiRateLimitSeconds());
@@ -68,6 +67,7 @@ public class SteamApi {
         this.apiKey = apiKey;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds()))
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
         this.objectMapper = new ObjectMapper();
         this.retryPolicy = createRetryPolicy();
@@ -122,6 +122,7 @@ public class SteamApi {
                 }
                 // Retry on rate limiting (429), server errors (5xx), and timeouts
                 return message.contains("status 429") || 
+                       message.contains("status 503") ||  // Service unavailable - common with Steam API
                        message.contains("status 5") ||
                        message.contains("timeout");
             }
@@ -191,24 +192,29 @@ public class SteamApi {
         // Build the request URL with required parameters (URL-encode parameters for safety)
         String encodedApiKey = URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
         String encodedSteamId = URLEncoder.encode(steamId, StandardCharsets.UTF_8);
-        String url = STEAM_API_BASE_URL.replace("{appid}", String.valueOf(TF2_APPID)) +
-                String.format("?key=%s&steamid=%s&format=json", encodedApiKey, encodedSteamId);
+        String url = STEAM_API_BASE_URL + String.format("?key=%s&steamid=%s&format=json", encodedApiKey, encodedSteamId);
         
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI(url))
                 .timeout(Duration.ofSeconds(SteamApiConfiguration.getSteamApiTimeoutSeconds()))
+                .header("User-Agent", "TF2-Custom-Pricer/1.0")
+                .header("Accept", "application/json")
+                .header("Accept-Encoding", "gzip, deflate")
                 .GET()
                 .build();
         
-        log.debug("Making Steam API request for steamId: {}", steamId);
+        log.debug("Making Steam API request for steamId: {} to URL: {}", steamId, url);
         
         HttpResponse<String> response = httpClient.send(request, 
                 HttpResponse.BodyHandlers.ofString());
         
-        log.debug("Steam API response status: {}", response.statusCode());
+        log.debug("Steam API response status: {}, headers: {}", response.statusCode(), response.headers().map());
         
         // Handle different HTTP status codes
-        if (response.statusCode() == 429) {
+        if (response.statusCode() == 503) {
+            log.warn("Steam API returned 503 Service Unavailable. This often indicates API overload or maintenance. Response: {}", response.body());
+            throw new IOException("Steam API service unavailable (status 503) - will retry with exponential backoff");
+        } else if (response.statusCode() == 429) {
             throw new IOException("Rate limited by Steam API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
             throw new IOException(String.format(
