@@ -148,9 +148,7 @@ public class BackpackTfApiClient {
                 // Do not retry on 404 (item not found) or 401 (authentication) errors
                 return (message.contains("status 429") || 
                         message.contains("status 5") ||
-                        message.contains("timeout")) &&
-                       !message.contains("status 404") &&
-                       !message.contains("status 401");
+                        message.contains("timeout"));
             }
         }
         return false;
