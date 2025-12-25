@@ -17,7 +17,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -106,7 +105,8 @@ class BackfillTimestampProtectionIntegrationTest {
         
         // Test Case 1: Database has significantly newer timestamp - should skip write
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(futureTime));
+        when(mockResultSet.getLong("updated_at")).thenReturn(futureTime);
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         boolean shouldSkip1 = conflictUtil.shouldSkipWrite("440_12345", currentTime, mockConnection);
         assertTrue(shouldSkip1, "Should skip write when database timestamp is significantly newer (beyond clock skew tolerance)");
@@ -119,7 +119,8 @@ class BackfillTimestampProtectionIntegrationTest {
         
         // Test Case 2: Database has older timestamp - should allow write
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(oldTime));
+        when(mockResultSet.getLong("updated_at")).thenReturn(oldTime);
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         boolean shouldSkip2 = conflictUtil.shouldSkipWrite("440_12346", currentTime, mockConnection);
         assertFalse(shouldSkip2, "Should allow write when database timestamp is older");
@@ -143,7 +144,8 @@ class BackfillTimestampProtectionIntegrationTest {
         conflictAllowedCount.set(0);
         
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(null);
+        when(mockResultSet.getLong("updated_at")).thenReturn(0L);
+        when(mockResultSet.wasNull()).thenReturn(true);
         
         boolean shouldSkip4 = conflictUtil.shouldSkipWrite("440_12348", currentTime, mockConnection);
         assertFalse(shouldSkip4, "Should allow write when database timestamp is null");
@@ -156,7 +158,8 @@ class BackfillTimestampProtectionIntegrationTest {
         
         long slightlyFutureTime = currentTime + 500; // 500 ms in future (within 5-minute tolerance)
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(slightlyFutureTime));
+        when(mockResultSet.getLong("updated_at")).thenReturn(slightlyFutureTime);
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         boolean shouldSkip5 = conflictUtil.shouldSkipWrite("440_12349", currentTime, mockConnection);
         assertFalse(shouldSkip5, "Should allow write when database timestamp is within clock skew tolerance");
@@ -181,7 +184,8 @@ class BackfillTimestampProtectionIntegrationTest {
         
         // Test Case 1: Database has significantly newer timestamp - delete should be skipped
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(futureTime));
+        when(mockResultSet.getLong("updated_at")).thenReturn(futureTime);
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         boolean shouldSkipDelete = conflictUtil.shouldSkipWrite("440_delete1", currentTime, mockConnection);
         assertTrue(shouldSkipDelete, "Delete should be skipped when database timestamp is significantly newer");
@@ -194,7 +198,8 @@ class BackfillTimestampProtectionIntegrationTest {
         
         // Test Case 2: Database has older timestamp - delete should proceed
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(currentTime - 300000));
+        when(mockResultSet.getLong("updated_at")).thenReturn(currentTime - 300000);
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         boolean shouldSkipDelete2 = conflictUtil.shouldSkipWrite("440_delete2", currentTime, mockConnection);
         assertFalse(shouldSkipDelete2, "Delete should proceed when database timestamp is older");
@@ -217,7 +222,8 @@ class BackfillTimestampProtectionIntegrationTest {
         
         // Scenario 1: Skip write (significantly newer database timestamp)
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(currentTime + 600000)); // 10 minutes future
+        when(mockResultSet.getLong("updated_at")).thenReturn(currentTime + 600000); // 10 minutes future
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         conflictUtil.shouldSkipWrite("440_metrics1", currentTime, mockConnection);
         assertEquals(1, conflictSkippedCount.get(), "Should increment skipped counter");
@@ -225,7 +231,8 @@ class BackfillTimestampProtectionIntegrationTest {
         // Scenario 2: Allow write (older database timestamp)
         reset(mockResultSet);
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenReturn(new Timestamp(currentTime - 60000));
+        when(mockResultSet.getLong("updated_at")).thenReturn(currentTime - 60000);
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         conflictUtil.shouldSkipWrite("440_metrics2", currentTime, mockConnection);
         assertEquals(1, conflictAllowedCount.get(), "Should increment allowed counter");
@@ -267,7 +274,8 @@ class BackfillTimestampProtectionIntegrationTest {
         when(mockConnection.prepareStatement(anyString())).thenReturn(mockPreparedStatement);
         when(mockPreparedStatement.executeQuery()).thenReturn(mockResultSet);
         when(mockResultSet.next()).thenReturn(true);
-        when(mockResultSet.getTimestamp("updated_at")).thenThrow(new SQLException("Invalid timestamp format"));
+        when(mockResultSet.getLong("updated_at")).thenThrow(new SQLException("Invalid timestamp format"));
+        when(mockResultSet.wasNull()).thenReturn(false);
         
         boolean shouldSkip3 = conflictUtil.shouldSkipWrite("440_parseerror", System.currentTimeMillis(), mockConnection);
         assertFalse(shouldSkip3, "Timestamp parsing error should default to allow write");

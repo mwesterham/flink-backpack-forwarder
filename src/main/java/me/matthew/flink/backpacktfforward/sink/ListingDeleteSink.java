@@ -29,7 +29,7 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
 
     private static final String MARK_DELETED_SQL = """
             UPDATE listings
-            SET is_deleted = true, updated_at = now()
+            SET is_deleted = true
             WHERE id = ?;
             """;
 

@@ -8,7 +8,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.DateTimeException;
 import java.time.Duration;
@@ -108,15 +107,15 @@ public class ConflictResolutionUtil {
             
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    Timestamp lastUpdated = rs.getTimestamp("updated_at");
+                    Long lastUpdatedMillis = rs.getLong("updated_at");
                     
-                    if (lastUpdated != null) {
+                    if (!rs.wasNull() && lastUpdatedMillis != null) {
                         Instant lastUpdatedInstant;
                         try {
-                            lastUpdatedInstant = lastUpdated.toInstant();
+                            lastUpdatedInstant = Instant.ofEpochMilli(lastUpdatedMillis);
                         } catch (DateTimeException e) {
                             log.error("Failed to parse database timestamp {} for listing {} - defaulting to allow write", 
-                                    lastUpdated, listingId, e);
+                                    lastUpdatedMillis, listingId, e);
                             conflictAllowedCounter.inc();
                             return false;
                         }

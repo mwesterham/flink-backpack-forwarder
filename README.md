@@ -1,3 +1,12 @@
+### Most used
+
+```
+mvn clean package && \
+docker build -t tf2-ingest-flink-job:1.0 . && \
+docker tag tf2-ingest-flink-job:1.0 mwesterham/tf2-ingest-flink-job:latest && \
+docker push mwesterham/tf2-ingest-flink-job:latest
+```
+
 ### Setup flink
 
 - Download
@@ -179,7 +188,7 @@ CREATE TABLE listings (
     short_value TEXT,
     long_value TEXT,
     details TEXT,
-    listed_at TIMESTAMP,
+    listed_at BIGINT,
     market_name TEXT,
     status TEXT,
     user_agent_client TEXT,
@@ -193,11 +202,20 @@ CREATE TABLE listings (
     item_quality_color TEXT,
     item_particle_name TEXT,
     item_particle_type TEXT,
-    bumped_at TIMESTAMP,
+    bumped_at BIGINT,
     is_deleted BOOLEAN DEFAULT false,
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT,
+    updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT
 );
+
+CREATE OR REPLACE FUNCTION set_updated_at_epoch_ms()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at :=
+    (EXTRACT(EPOCH FROM now() AT TIME ZONE 'UTC') * 1000)::BIGINT;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 ```
 
 - Build the package

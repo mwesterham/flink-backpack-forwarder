@@ -14,7 +14,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -64,9 +63,7 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             item_particle_name = EXCLUDED.item_particle_name,
             item_particle_type = EXCLUDED.item_particle_type,
             bumped_at = EXCLUDED.bumped_at,
-            is_deleted = false,
-            updated_at = now()
-        WHERE EXCLUDED.bumped_at >= listings.updated_at;
+            is_deleted = false;
         """;
 
     private Connection connection;
@@ -210,7 +207,7 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
                     stmt.setString(10, p.getValue() != null ? p.getValue().getShortStr() : null);
                     stmt.setString(11, p.getValue() != null ? p.getValue().getLongStr() : null);
                     stmt.setString(12, p.getDetails());
-                    stmt.setTimestamp(13, new Timestamp(p.getListedAt() * 1000));
+                    stmt.setLong(13, p.getListedAt() * 1000);
                     stmt.setString(14, p.getItem() != null ? p.getItem().getMarketName() : null);
                     stmt.setString(15, p.getStatus());
                     stmt.setString(16, p.getUserAgent() != null ? p.getUserAgent().getClient() : null);
@@ -226,7 +223,7 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
                     stmt.setString(24, p.getItem() != null && p.getItem().getQuality() != null ? p.getItem().getQuality().getColor() : null);
                     stmt.setString(25, p.getItem() != null && p.getItem().getParticle() != null ? p.getItem().getParticle().getName() : null);
                     stmt.setString(26, p.getItem() != null && p.getItem().getParticle() != null ? p.getItem().getParticle().getType() : null);
-                    stmt.setTimestamp(27, new Timestamp(p.getBumpedAt() * 1000));
+                    stmt.setLong(27, p.getBumpedAt() * 1000);
 
                     stmt.addBatch();
                     upsertCounter.inc();
