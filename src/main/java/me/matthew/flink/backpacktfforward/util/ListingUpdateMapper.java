@@ -27,6 +27,20 @@ public class ListingUpdateMapper {
      * @throws IllegalArgumentException if the source of truth doesn't have minimum required data
      */
     public static ListingUpdate mapToListingUpdate(SourceOfTruthListing sourceOfTruth) {
+        return mapToListingUpdate(sourceOfTruth, null);
+    }
+    
+    /**
+     * Maps a SourceOfTruthListing to a ListingUpdate object for database updates with generation timestamp.
+     * Uses the actual listing ID from the getListing API response as the primary key.
+     * Handles both buy and sell intents with event="listing-update".
+     * 
+     * @param sourceOfTruth the source of truth listing containing all data
+     * @param generationTimestamp the timestamp when this backfill data was generated (null for real-time data)
+     * @return a ListingUpdate object ready for processing by sinks
+     * @throws IllegalArgumentException if the source of truth doesn't have minimum required data
+     */
+    public static ListingUpdate mapToListingUpdate(SourceOfTruthListing sourceOfTruth, Long generationTimestamp) {
         if (sourceOfTruth == null) {
             throw new IllegalArgumentException("SourceOfTruthListing cannot be null");
         }
@@ -36,7 +50,7 @@ public class ListingUpdateMapper {
                     + sourceOfTruth.getMissingDataDescription());
         }
         
-        return mapFromListingDetail(sourceOfTruth.getListingDetail());
+        return mapFromListingDetail(sourceOfTruth.getListingDetail(), generationTimestamp);
     }
     
     /**
@@ -48,6 +62,19 @@ public class ListingUpdateMapper {
      * @throws IllegalArgumentException if the listing detail is null or missing required data
      */
     public static ListingUpdate mapFromListingDetail(BackpackTfListingDetail listingDetail) {
+        return mapFromListingDetail(listingDetail, null);
+    }
+    
+    /**
+     * Maps a BackpackTfListingDetail directly to a ListingUpdate object with generation timestamp.
+     * This is the simplified approach that just maps the fields directly.
+     * 
+     * @param listingDetail the BackpackTF listing detail to map
+     * @param generationTimestamp the timestamp when this backfill data was generated (null for real-time data)
+     * @return a ListingUpdate object ready for processing by sinks
+     * @throws IllegalArgumentException if the listing detail is null or missing required data
+     */
+    public static ListingUpdate mapFromListingDetail(BackpackTfListingDetail listingDetail, Long generationTimestamp) {
         if (listingDetail == null) {
             throw new IllegalArgumentException("BackpackTfListingDetail cannot be null");
         }
@@ -56,11 +83,13 @@ public class ListingUpdateMapper {
             throw new IllegalArgumentException("BackpackTfListingDetail must have a valid ID");
         }
         
-        log.debug("Mapping BackpackTfListingDetail to ListingUpdate for listing ID: {}", listingDetail.getId());
+        log.debug("Mapping BackpackTfListingDetail to ListingUpdate for listing ID: {} with generation_timestamp: {}", 
+                listingDetail.getId(), generationTimestamp);
         
         ListingUpdate update = new ListingUpdate();
         update.setId(listingDetail.getId());
         update.setEvent("listing-update");
+        update.setGenerationTimestamp(generationTimestamp);
         
         // Create and populate the payload - simple direct mapping
         ListingUpdate.Payload payload = new ListingUpdate.Payload();
@@ -102,15 +131,30 @@ public class ListingUpdateMapper {
      * @return a ListingUpdate object for deletion
      */
     public static ListingUpdate createDeleteEvent(String listingId, String steamId) {
+        return createDeleteEvent(listingId, steamId, null);
+    }
+    
+    /**
+     * Creates a ListingUpdate object for deleting a stale listing with generation timestamp.
+     * Uses event="listing-delete" and includes sufficient identification data.
+     * 
+     * @param listingId the ID of the listing to delete
+     * @param steamId the Steam ID associated with the listing
+     * @param generationTimestamp the timestamp when this backfill data was generated (null for real-time data)
+     * @return a ListingUpdate object for deletion
+     */
+    public static ListingUpdate createDeleteEvent(String listingId, String steamId, Long generationTimestamp) {
         if (listingId == null || listingId.trim().isEmpty()) {
             throw new IllegalArgumentException("Listing ID cannot be null or empty for delete event");
         }
         
-        log.debug("Creating delete event for listing ID: {}, Steam ID: {}", listingId, steamId);
+        log.debug("Creating delete event for listing ID: {}, Steam ID: {} with generation_timestamp: {}", 
+                listingId, steamId, generationTimestamp);
         
         ListingUpdate deleteUpdate = new ListingUpdate();
         deleteUpdate.setId(listingId);
         deleteUpdate.setEvent("listing-delete");
+        deleteUpdate.setGenerationTimestamp(generationTimestamp);
         
         // Create minimal payload with identification data
         ListingUpdate.Payload payload = new ListingUpdate.Payload();

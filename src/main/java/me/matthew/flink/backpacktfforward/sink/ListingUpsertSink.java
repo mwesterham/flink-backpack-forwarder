@@ -5,6 +5,7 @@ import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
+import me.matthew.flink.backpacktfforward.util.ConflictResolutionUtil;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
@@ -19,8 +20,11 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.CONFLICT_WRITES_ALLOWED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.CONFLICT_WRITES_SKIPPED;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERTS;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERT_RETRIES;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.REALTIME_WRITES_PROCESSED;
 
 @Slf4j
 public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
@@ -68,6 +72,10 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     private Connection connection;
     private PreparedStatement stmt;
     private transient Counter upsertCounter;
+    private transient ConflictResolutionUtil conflictResolutionUtil;
+    private transient Counter conflictSkippedCounter;
+    private transient Counter conflictAllowedCounter;
+    private transient Counter realTimeWritesCounter;
 
     private final List<ListingUpdate> batch = new ArrayList<>();
     private final int batchSize;
@@ -97,6 +105,16 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
         stmt = connection.prepareStatement(UPSERT_SQL);
 
         upsertCounter = getRuntimeContext().getMetricGroup().counter(LISTING_UPSERTS);
+        conflictSkippedCounter = getRuntimeContext().getMetricGroup().counter(CONFLICT_WRITES_SKIPPED);
+        conflictAllowedCounter = getRuntimeContext().getMetricGroup().counter(CONFLICT_WRITES_ALLOWED);
+        realTimeWritesCounter = getRuntimeContext().getMetricGroup().counter(REALTIME_WRITES_PROCESSED);
+        
+        // Initialize conflict resolution utility with metrics counters
+        conflictResolutionUtil = new ConflictResolutionUtil(
+                conflictSkippedCounter,
+                conflictAllowedCounter
+        );
+        
         SqlRetryMetrics sqlRetryMetrics = new SqlRetryMetrics(
                 getRuntimeContext().getMetricGroup(),
                 LISTING_UPSERT_RETRIES
@@ -108,7 +126,43 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
 
     @Override
     public void invoke(ListingUpdate lu, Context context) throws Exception {
-        batch.add(lu);
+        // Validate ListingUpdate object for backward compatibility and robustness
+        if (!ConflictResolutionUtil.isValidListingUpdate(lu)) {
+            log.warn("Received invalid ListingUpdate - skipping processing");
+            return;
+        }
+        
+        // Fast path: Real-time updates (null generation timestamp) always proceed without database queries
+        if (lu.getGenerationTimestamp() == null) {
+            realTimeWritesCounter.inc();
+            batch.add(lu);
+        } else {
+            // Only apply conflict resolution for backfill updates (non-null generation timestamp)
+            try {
+                boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(
+                        lu.getPayload().getId(), 
+                        lu.getGenerationTimestamp(), 
+                        connection
+                );
+                
+                if (!shouldSkip) {
+                    batch.add(lu);
+                }
+                // If shouldSkip is true, the update is filtered out and metrics are already incremented by ConflictResolutionUtil
+                
+            } catch (SQLException e) {
+                // Enhanced error handling: ConflictResolutionUtil now handles most errors gracefully,
+                // but if SQLException is still thrown, it indicates a serious database connectivity issue
+                log.error("Critical database error during conflict resolution for listing {} - attempting to proceed with write to maintain availability", 
+                        lu.getPayload().getId(), e);
+                batch.add(lu);
+            } catch (Exception e) {
+                // Catch any other unexpected errors to prevent processing pipeline from failing
+                log.error("Unexpected error during conflict resolution for listing {} - proceeding with write to maintain system stability", 
+                        lu.getPayload().getId(), e);
+                batch.add(lu);
+            }
+        }
 
         long now = System.currentTimeMillis();
         if (batch.size() >= batchSize || now - lastFlushTime >= batchIntervalMs) {

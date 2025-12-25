@@ -41,6 +41,11 @@ public final class Metrics {
     public static final String ITEMS_MATCHED = "items_matched";
     public static final String SOURCE_OF_TRUTH_LISTINGS_CREATED = "source_of_truth_listings_created";
 
+    // Conflict resolution metrics
+    public static final String CONFLICT_WRITES_SKIPPED = "conflict_writes_skipped";
+    public static final String CONFLICT_WRITES_ALLOWED = "conflict_writes_allowed";
+    public static final String REALTIME_WRITES_PROCESSED = "realtime_writes_processed";
+
     // Performance tracking gauge metrics
     public static final String BACKFILL_LAST_API_CALL_LATENCY = "backfill_last_api_call_latency";
     public static final String BACKFILL_LAST_PROCESSING_TIME = "backfill_last_processing_time";

@@ -20,6 +20,10 @@ public class ListingUpdate {
     public String id;
     public String event;
     public Payload payload;
+    
+    // Generation timestamp for backfill conflict resolution (Unix timestamp in milliseconds)
+    @JsonProperty("generation_timestamp")
+    public Long generationTimestamp;
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)

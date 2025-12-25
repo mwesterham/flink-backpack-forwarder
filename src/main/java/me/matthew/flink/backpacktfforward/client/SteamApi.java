@@ -87,7 +87,7 @@ public class SteamApi {
                 .handle(JsonParseException.class) // Handle JSON parsing failures
                 .handleIf(this::isRetryableHttpError)
                 .withDelay(Duration.ofSeconds(2))
-                .withMaxRetries(15) // Limited retries to prevent infinite loops
+                .withMaxRetries(-1)
                 .withBackoff(Duration.ofSeconds(2), Duration.ofMinutes(5)) // Longer max backoff for severe issues
                 .onRetry(e -> {
                     if (e.getAttemptCount() > 10) {

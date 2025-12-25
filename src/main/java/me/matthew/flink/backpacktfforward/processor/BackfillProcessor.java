@@ -153,8 +153,11 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
     public void flatMap(BackfillRequest request, Collector<ListingUpdate> out) throws Exception {
         long processingStartTime = System.currentTimeMillis();
         
-        log.info("Starting backfill processing for item_defindex={}, item_quality_id={}", 
-                request.getItemDefindex(), request.getItemQualityId());
+        // Capture generation timestamp at the start of processing for conflict resolution
+        long generationTimestamp = System.currentTimeMillis();
+        
+        log.info("Starting backfill processing for item_defindex={}, item_quality_id={} with generation_timestamp={}", 
+                request.getItemDefindex(), request.getItemQualityId(), generationTimestamp);
         
         try {
             // Step 1: Query database for ALL rows matching defindex/quality combination
@@ -227,7 +230,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 log.info("No listings returned from BackpackTF API for market_name: {}. " +
                         "Proceeding with stale data detection only.", marketName);
                 // Still need to handle stale data detection when API returns empty listings
-                int deletesGenerated = handleStaleDataDetection(allDbListings, new ArrayList<>(), out);
+                int deletesGenerated = handleStaleDataDetection(allDbListings, new ArrayList<>(), generationTimestamp, out);
                 backfillRequestsProcessed.inc();
                 
                 long totalProcessingTime = System.currentTimeMillis() - processingStartTime;
@@ -379,13 +382,13 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
             int updatesGenerated = 0;
             for (SourceOfTruthListing sotListing : sourceOfTruthListings) {
                 try {
-                    ListingUpdate updateEvent = ListingUpdateMapper.mapToListingUpdate(sotListing);
+                    ListingUpdate updateEvent = ListingUpdateMapper.mapToListingUpdate(sotListing, generationTimestamp);
                     out.collect(updateEvent);
                     updatesGenerated++;
                     backfillListingsUpdated.inc();
                     
-                    log.debug("Emitted listing-update event for listing ID: {}, intent: {}", 
-                            sotListing.getActualListingId(), sotListing.getIntent());
+                    log.debug("Emitted listing-update event for listing ID: {}, intent: {} with generation_timestamp: {}", 
+                            sotListing.getActualListingId(), sotListing.getIntent(), generationTimestamp);
                 } catch (Exception mappingError) {
                     log.error("Error mapping source of truth listing to ListingUpdate for listing ID {}: {}. " +
                              "Skipping this update but continuing with others.", 
@@ -395,7 +398,7 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
             }
             
             // Step 7: Detect stale data and generate listing-delete events
-            int deletesGenerated = handleStaleDataDetection(allDbListings, sourceOfTruthListings, out);
+            int deletesGenerated = handleStaleDataDetection(allDbListings, sourceOfTruthListings, generationTimestamp, out);
             
             // Mark request as successfully processed
             backfillRequestsProcessed.inc();
@@ -426,11 +429,12 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
      * 
      * @param allDbListings All database listings for the item combination
      * @param sourceOfTruthListings Complete source of truth dataset from APIs
+     * @param generationTimestamp The timestamp when this backfill data was generated
      * @param out Collector to emit delete events
      * @return Number of delete events generated
      */
     private int handleStaleDataDetection(List<DatabaseHelper.ExistingListing> allDbListings, 
-            List<SourceOfTruthListing> sourceOfTruthListings, Collector<ListingUpdate> out) {
+            List<SourceOfTruthListing> sourceOfTruthListings, Long generationTimestamp, Collector<ListingUpdate> out) {
         
         if (allDbListings == null || allDbListings.isEmpty()) {
             log.debug("No existing database listings found, no stale data to detect");
@@ -443,8 +447,8 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 .filter(id -> id != null)
                 .collect(Collectors.toSet());
         
-        log.info("Starting stale data detection: comparing {} database listings against {} source of truth listings", 
-                allDbListings.size(), sourceOfTruthIds.size());
+        log.info("Starting stale data detection: comparing {} database listings against {} source of truth listings with generation_timestamp: {}", 
+                allDbListings.size(), sourceOfTruthIds.size(), generationTimestamp);
         
         int staleListingsCount = 0;
         long staleDetectionStartTime = System.currentTimeMillis();
@@ -454,13 +458,13 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                 // If this database listing's ID is not in the source of truth, it's stale
                 if (!sourceOfTruthIds.contains(dbListing.getId())) {
                     ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteEvent(
-                            dbListing.getId(), dbListing.getSteamid());
+                            dbListing.getId(), dbListing.getSteamid(), generationTimestamp);
                     out.collect(deleteEvent);
                     staleListingsCount++;
                     backfillStaleListingsDetected.inc();
                     
-                    log.debug("Emitting delete event for stale listing: id={}, steamid={}", 
-                            dbListing.getId(), dbListing.getSteamid());
+                    log.debug("Emitting delete event for stale listing: id={}, steamid={} with generation_timestamp: {}", 
+                            dbListing.getId(), dbListing.getSteamid(), generationTimestamp);
                 }
             } catch (Exception e) {
                 log.error("Error creating delete event for stale listing id={}, steamid={}: {}. " +
@@ -473,8 +477,8 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         long staleDetectionDuration = System.currentTimeMillis() - staleDetectionStartTime;
         
         if (staleListingsCount > 0) {
-            log.info("Stale data detection completed in {}ms: identified {} stale listings for deletion", 
-                    staleDetectionDuration, staleListingsCount);
+            log.info("Stale data detection completed in {}ms: identified {} stale listings for deletion with generation_timestamp: {}", 
+                    staleDetectionDuration, staleListingsCount, generationTimestamp);
         } else {
             log.info("Stale data detection completed in {}ms: no stale listings identified for deletion", 
                     staleDetectionDuration);
