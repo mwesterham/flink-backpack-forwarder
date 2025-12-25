@@ -144,8 +144,11 @@ public class BackpackTfApiClient {
         if (throwable instanceof IOException) {
             String message = throwable.getMessage();
             if (message != null) {
-                // Retry on rate limiting (429), server errors (5xx), and timeouts
                 // Do not retry on 404 (item not found) or 401 (authentication) errors
+                if (message.contains("status 404") || message.contains("status 401")) {
+                    return false;
+                }
+                // Retry on rate limiting (429), server errors (5xx), and timeouts
                 return (message.contains("status 429") || 
                         message.contains("status 5") ||
                         message.contains("timeout"));
@@ -350,8 +353,7 @@ public class BackpackTfApiClient {
         } else if (response.statusCode() == 401) {
             throw new IOException("BackpackTF getListing API authentication failed - check API token (status 401)");
         } else if (response.statusCode() == 404) {
-            throw new IOException(String.format(
-                    "Listing not found for item ID %s (status 404)", itemId));
+            return null; // this is a valid case, we want to return null
         } else if (response.statusCode() != 200) {
             throw new IOException(String.format(
                     "BackpackTF getListing API request failed with status %d: %s", 
