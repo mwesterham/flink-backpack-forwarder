@@ -250,7 +250,11 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
             
             log.info("Processing {} BackpackTF listings with optimized approach (buy orders skip Steam API)", apiResponse.getListings().size());
             
+            int processedCount = 0;
+            int totalListings = apiResponse.getListings().size();
+            
             for (BackpackTfApiResponse.ApiListing apiListing : apiResponse.getListings()) {
+                processedCount++;
                 try {
                     // Check intent to determine processing path
                     if ("buy".equalsIgnoreCase(apiListing.getIntent())) {
@@ -271,8 +275,8 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                                 sourceOfTruthListings.add(sotListing);
                                 sourceOfTruthListingsCreated.inc();
                                 
-                                log.debug("Successfully created source of truth listing for buy order in {}ms: listing ID: {}, steamid: {}", 
-                                        getListingDuration, listingDetail.getId(), apiListing.getSteamid());
+                                log.info("Processed ({}/{}). Successfully generated (not emitted) source of truth listing for buy order in {}ms: listing ID: {}, steamid: {}", 
+                                        processedCount, totalListings, getListingDuration, listingDetail.getId(), apiListing.getSteamid());
                             } else {
                                 log.warn("getListing API returned null or incomplete data after {}ms for buy order listing ID: {}. Skipping this listing.", 
                                         getListingDuration, listingId);
@@ -345,8 +349,8 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
                                     sourceOfTruthListings.add(sotListing);
                                     sourceOfTruthListingsCreated.inc();
                                     
-                                    log.debug("Successfully created source of truth listing for sell order in {}ms: item ID: {}, listing ID: {}", 
-                                            getListingDuration, matchingItem.getId(), listingDetail.getId());
+                                    log.info("Processed ({}/{}). Successfully generated (not emitted) source of truth listing for sell order in {}ms: listing ID: {}, steamid: {}", 
+                                        processedCount, totalListings, getListingDuration, listingDetail.getId(), apiListing.getSteamid());
                                 } else {
                                     log.warn("getListing API returned null or incomplete data after {}ms for sell order listing ID: {}. Skipping this item.", 
                                             getListingDuration, listingId);
