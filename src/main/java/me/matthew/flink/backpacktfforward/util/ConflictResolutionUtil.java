@@ -31,7 +31,7 @@ public class ConflictResolutionUtil {
         """;
     
     // Clock skew tolerance: allow up to 5 minutes of clock difference between systems
-    private static final Duration CLOCK_SKEW_TOLERANCE = Duration.ofMinutes(5);
+    private static final Duration CLOCK_SKEW_TOLERANCE = Duration.ofSeconds(1);
     
     private final Counter conflictSkippedCounter;
     private final Counter conflictAllowedCounter;
