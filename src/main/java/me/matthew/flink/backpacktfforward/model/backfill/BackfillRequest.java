@@ -1,4 +1,4 @@
-package me.matthew.flink.backpacktfforward.model;
+package me.matthew.flink.backpacktfforward.model.backfill;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;

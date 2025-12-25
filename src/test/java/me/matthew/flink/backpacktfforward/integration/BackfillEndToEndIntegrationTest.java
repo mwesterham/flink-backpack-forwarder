@@ -3,6 +3,7 @@ package me.matthew.flink.backpacktfforward.integration;
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
 import me.matthew.flink.backpacktfforward.client.SteamApi;
 import me.matthew.flink.backpacktfforward.model.*;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
 import me.matthew.flink.backpacktfforward.processor.BackfillProcessor;
 import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
 import org.junit.jupiter.api.Test;

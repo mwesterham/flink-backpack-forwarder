@@ -1,8 +1,8 @@
 package me.matthew.flink.backpacktfforward.integration;
 
 import me.matthew.flink.backpacktfforward.WebSocketForwarderJob;
-import me.matthew.flink.backpacktfforward.model.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
 import me.matthew.flink.backpacktfforward.parser.BackfillMessageParser;
 import me.matthew.flink.backpacktfforward.parser.KafkaMessageParser;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;

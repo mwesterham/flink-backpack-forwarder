@@ -1,6 +1,9 @@
 package me.matthew.flink.backpacktfforward.model;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 

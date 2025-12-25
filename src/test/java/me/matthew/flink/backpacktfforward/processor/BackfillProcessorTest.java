@@ -1,7 +1,8 @@
 package me.matthew.flink.backpacktfforward.processor;
 
-import me.matthew.flink.backpacktfforward.model.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;

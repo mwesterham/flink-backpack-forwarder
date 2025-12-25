@@ -3,7 +3,8 @@ package me.matthew.flink.backpacktfforward.parser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.BackfillKafkaMessage;
-import me.matthew.flink.backpacktfforward.model.BackfillRequest;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;

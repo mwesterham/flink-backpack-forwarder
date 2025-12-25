@@ -1,7 +1,8 @@
 package me.matthew.flink.backpacktfforward.source;
 
 import lombok.extern.slf4j.Slf4j;
-import me.matthew.flink.backpacktfforward.model.BackfillRequest;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
