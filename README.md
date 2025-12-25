@@ -208,6 +208,7 @@ CREATE TABLE listings (
     updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT
 );
 
+--Create function
 CREATE OR REPLACE FUNCTION set_updated_at_epoch_ms()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -216,6 +217,20 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+--Attach function as trigger
+CREATE TRIGGER listings_set_updated_at
+BEFORE UPDATE ON listings
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+--Verify its there
+SELECT
+  tgname,
+  tgenabled
+FROM pg_trigger
+WHERE tgrelid = 'listings'::regclass
+  AND NOT tgisinternal;
 ```
 
 - Build the package
