@@ -28,6 +28,7 @@ public class KafkaConfiguration {
     
     // Optional environment variables
     private static final String KAFKA_START_TIMESTAMP_ENV = "KAFKA_START_TIMESTAMP";
+    private static final int DEFAULT_KAFKA_TIMESTAMP_MINUTES = 30;
     
     // Prefix for additional Kafka consumer properties
     private static final String KAFKA_CONSUMER_PREFIX = "KAFKA_CONSUMER_";
@@ -85,7 +86,7 @@ public class KafkaConfiguration {
     public static Long getStartTimestamp() {
         String timestampStr = System.getenv(KAFKA_START_TIMESTAMP_ENV);
         if (timestampStr == null || timestampStr.trim().isEmpty()) {
-            return null;
+            return System.currentTimeMillis() - Duration.ofMinutes(DEFAULT_KAFKA_TIMESTAMP_MINUTES).toMillis();
         }
         
         try {
