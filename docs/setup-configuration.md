@@ -176,6 +176,8 @@ CREATE TABLE listings (
     item_particle_name TEXT,
     item_particle_type TEXT,
     bumped_at BIGINT,
+    spell_ids TEXT[],
+    strange_part_ids TEXT[],
     is_deleted BOOLEAN DEFAULT false,
     created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT,
     updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT

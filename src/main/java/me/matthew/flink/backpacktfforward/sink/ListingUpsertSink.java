@@ -10,6 +10,7 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -34,8 +35,9 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             raw_value, short_value, long_value, details, listed_at,
             market_name, status, user_agent_client, user_name, user_premium, user_online,
             user_banned, user_trade_offer_url, item_tradable, item_craftable,
-            item_quality_color, item_particle_name, item_particle_type, bumped_at, is_deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)
+            item_quality_color, item_particle_name, item_particle_type, bumped_at, 
+            spell_ids, strange_part_ids, is_deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)
         ON CONFLICT (id) DO UPDATE SET
             steamid = EXCLUDED.steamid,
             item_defindex = EXCLUDED.item_defindex,
@@ -63,6 +65,8 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             item_particle_name = EXCLUDED.item_particle_name,
             item_particle_type = EXCLUDED.item_particle_type,
             bumped_at = EXCLUDED.bumped_at,
+            spell_ids = EXCLUDED.spell_ids,
+            strange_part_ids = EXCLUDED.strange_part_ids,
             is_deleted = false;
         """;
 
@@ -224,6 +228,12 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
                     stmt.setString(25, p.getItem() != null && p.getItem().getParticle() != null ? p.getItem().getParticle().getName() : null);
                     stmt.setString(26, p.getItem() != null && p.getItem().getParticle() != null ? p.getItem().getParticle().getType() : null);
                     stmt.setLong(27, p.getBumpedAt() * 1000);
+                    
+                    // Set spell IDs array
+                    stmt.setArray(28, createSpellIdsArray(p, connection));
+                    
+                    // Set strange part IDs array
+                    stmt.setArray(29, createStrangePartIdsArray(p, connection));
 
                     stmt.addBatch();
                     upsertCounter.inc();
@@ -239,6 +249,40 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
         });
 
         batch.clear();
+    }
+
+    /**
+     * Creates a PostgreSQL array of spell IDs from the ListingUpdate payload.
+     * Returns null if no spells are present.
+     */
+    private Array createSpellIdsArray(ListingUpdate.Payload payload, Connection connection) throws SQLException {
+        if (payload.getItem() == null || payload.getItem().getSpells() == null || payload.getItem().getSpells().isEmpty()) {
+            return null;
+        }
+        
+        String[] spellIds = payload.getItem().getSpells().stream()
+                .map(spell -> spell.getId())
+                .filter(id -> id != null && !id.trim().isEmpty())
+                .toArray(String[]::new);
+                
+        return spellIds.length > 0 ? connection.createArrayOf("text", spellIds) : null;
+    }
+
+    /**
+     * Creates a PostgreSQL array of strange part kill eater IDs from the ListingUpdate payload.
+     * Returns null if no strange parts are present.
+     */
+    private Array createStrangePartIdsArray(ListingUpdate.Payload payload, Connection connection) throws SQLException {
+        if (payload.getItem() == null || payload.getItem().getStrangeParts() == null || payload.getItem().getStrangeParts().isEmpty()) {
+            return null;
+        }
+        
+        String[] strangePartIds = payload.getItem().getStrangeParts().stream()
+                .map(part -> part.getKillEater() != null ? String.valueOf(part.getKillEater().getId()) : null)
+                .filter(id -> id != null && !id.trim().isEmpty())
+                .toArray(String[]::new);
+                
+        return strangePartIds.length > 0 ? connection.createArrayOf("text", strangePartIds) : null;
     }
 
     @Override

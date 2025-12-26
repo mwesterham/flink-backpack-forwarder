@@ -254,7 +254,7 @@ public class ListingUpdateMapper {
         mappedItem.setImageUrl(apiItem.getImageUrl());
         mappedItem.setMarketName(apiItem.getMarketName());
         mappedItem.setName(apiItem.getName());
-        mappedItem.setOrigin(apiItem.getOrigin());
+        mappedItem.setOrigin(mapOrigin(apiItem.getOrigin()));
         mappedItem.setOriginalId(apiItem.getOriginalId());
         mappedItem.setSummary(apiItem.getSummary());
         mappedItem.setSlot(apiItem.getSlot());
@@ -304,5 +304,39 @@ public class ListingUpdateMapper {
         mappedUser.setBans(apiUser.getBans());
         
         return mappedUser;
+    }
+    
+    /**
+     * Maps origin information from Object to ListingUpdate.Origin format.
+     * Handles the case where origin might be null or a Map with id/name fields.
+     */
+    private static ListingUpdate.Origin mapOrigin(Object originObj) {
+        if (originObj == null) {
+            return null;
+        }
+        
+        // If it's already a Map, extract id and name
+        if (originObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> originMap = (Map<String, Object>) originObj;
+            
+            ListingUpdate.Origin origin = new ListingUpdate.Origin();
+            
+            Object idObj = originMap.get("id");
+            if (idObj instanceof Number) {
+                origin.setId(((Number) idObj).intValue());
+            }
+            
+            Object nameObj = originMap.get("name");
+            if (nameObj instanceof String) {
+                origin.setName((String) nameObj);
+            }
+            
+            return origin;
+        }
+        
+        // If it's some other type, log and return null
+        log.warn("Unexpected origin type: {}, returning null", originObj.getClass().getSimpleName());
+        return null;
     }
 }

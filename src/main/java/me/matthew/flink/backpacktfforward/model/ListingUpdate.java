@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.Data;
 
 import java.io.IOException;
@@ -77,9 +76,10 @@ public class ListingUpdate {
         public String longStr;
         public double raw;
         public double value;
+        public Double valueHigh;
         public double usd;
-        public long updatedAt;
-        public double difference;
+        public Long updatedAt;
+        public Double difference;
     }
 
     @Data
@@ -92,18 +92,24 @@ public class ListingUpdate {
         public String imageUrl;
         public String marketName;
         public String name;
-        public Object origin;
+        public Origin origin;
         public String originalId;
         public Quality quality;
         public String summary;
-        @JsonDeserialize(using = PriceDeserializer.class)
-        public List<Price> price;
+        public ItemPrice price;
+        public Integer level;
+        public List<Equipped> equipped;
+        public List<StrangePart> strangeParts;
+        public List<Spell> spells;
+        @JsonProperty("class")
         public List<String> clazz;
         public String slot;
         public Particle particle;
+        public ItemStyle style;
         public Boolean tradable;
         public Boolean craftable;
         public String priceindex;
+        public String tag;
     }
 
 
@@ -148,6 +154,61 @@ public class ListingUpdate {
         public Object role;
         public String tradeOfferUrl;
         public Object bans;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Origin {
+        public int id;
+        public String name;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Equipped {
+        @JsonProperty("class")
+        public int clazz;
+        public int slot;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Spell {
+        public String id;
+        public String spellId;
+        public String name;
+        public String type;
+        public int defindex;
+        public String color;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ItemStyle {
+        public String name;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ItemPrice {
+        public Price steam;
+        public Price community;
+        public Price suggested;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class StrangePart {
+        public int score;
+        public KillEater killEater;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class KillEater {
+        public int id;
+        public String name;
+        public Item item;
     }
 
     public static class PriceDeserializer extends JsonDeserializer<List<Price>> {
