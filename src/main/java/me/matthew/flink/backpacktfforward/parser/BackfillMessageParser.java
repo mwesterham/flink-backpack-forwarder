@@ -104,7 +104,7 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
             BackfillRequest request = wrapper.getData();
             
             // Validate required fields with detailed error messages
-            if (request.getItemDefindex() <= 0) {
+            if (request.getItemDefindex() != null && request.getItemDefindex() <= 0) {
                 log.error("Invalid item_defindex in backfill request: {}. Must be positive integer. Raw message = {}", 
                          request.getItemDefindex(), kafkaMessageValue);
                 if (failedParses != null) {
@@ -113,7 +113,7 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
                 return;
             }
             
-            if (request.getItemQualityId() <= 0) {
+            if (request.getItemQualityId() != null && request.getItemQualityId() <= 0) {
                 log.error("Invalid item_quality_id in backfill request: {}. Must be positive integer. Raw message = {}", 
                          request.getItemQualityId(), kafkaMessageValue);
                 if (failedParses != null) {

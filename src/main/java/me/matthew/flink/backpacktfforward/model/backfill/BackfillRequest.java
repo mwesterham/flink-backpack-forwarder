@@ -22,13 +22,13 @@ public class BackfillRequest {
      * Item definition index identifying the specific item type
      */
     @JsonProperty("item_defindex")
-    private int itemDefindex;
+    private Integer itemDefindex;
     
     /**
      * Item quality ID identifying the quality/rarity of the item
      */
     @JsonProperty("item_quality_id")
-    private int itemQualityId;
+    private Integer itemQualityId;
     
     /**
      * Market name for the item (retrieved from database during processing)

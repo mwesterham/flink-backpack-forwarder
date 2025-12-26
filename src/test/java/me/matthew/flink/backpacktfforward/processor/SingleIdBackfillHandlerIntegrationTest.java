@@ -338,7 +338,7 @@ class SingleIdBackfillHandlerIntegrationTest {
         // Requests with invalid additional parameters
         BackfillRequest requestWithInventorySize = createBackfillRequest("440_16525961480");
         requestWithInventorySize.setMaxInventorySize(10);
-        assertFalse(handler.canHandle(requestWithInventorySize));
+        assertTrue(handler.canHandle(requestWithInventorySize));
         
         // Requests with item parameters (should be warnings but still valid)
         BackfillRequest requestWithItemParams = createBackfillRequest("440_16525961480");

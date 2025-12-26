@@ -87,24 +87,6 @@ public class SingleIdBackfillHandler implements BackfillRequestHandler {
             return false;
         }
 
-        // SINGLE_ID requests should not have item defindex/quality parameters
-        // (these will be retrieved from the database based on the listing ID)
-        if (request.getItemDefindex() > 0 || request.getItemQualityId() >= 0) {
-            log.warn("SINGLE_ID request should not include item_defindex or item_quality_id parameters. " +
-                    "These will be retrieved from the database based on listing_id: {}",
-                    request.getListingId());
-            // This is a warning but not a validation failure - we'll ignore these
-            // parameters
-        }
-
-        // SINGLE_ID requests should not have max_inventory_size parameter
-        if (request.getMaxInventorySize() != null) {
-            log.warn("Cannot handle SINGLE_ID request with max_inventory_size parameter: {}. " +
-                    "Use INVENTORY_FILTERED request type for inventory size filtering.",
-                    request.getMaxInventorySize());
-            return false;
-        }
-
         log.debug("SINGLE_ID backfill request validation passed for listing_id={}",
                 request.getListingId());
         return true;

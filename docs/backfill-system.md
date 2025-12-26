@@ -132,7 +132,8 @@ If `request_type` is not specified, defaults to `FULL` for backward compatibilit
   "data": {
     "request_type": "FULL",
     "item_defindex": 190,
-    "item_quality_id": 11
+    "item_quality_id": 11,
+    "max_inventory_size": 50
   },
   "timestamp": "2024-01-01T12:00:00.000Z",
   "messageId": "full-backfill-strange-bat"
@@ -144,8 +145,8 @@ If `request_type` is not specified, defaults to `FULL` for backward compatibilit
 {
   "data": {
     "request_type": "BUY_ONLY", 
-    "item_defindex": 266,
-    "item_quality_id": 5
+    "item_defindex": 5021,
+    "item_quality_id": 6
   },
   "timestamp": "2024-01-01T12:00:00.000Z",
   "messageId": "buy-only-unusual-horsemann"

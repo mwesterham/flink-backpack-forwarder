@@ -233,6 +233,11 @@ public class SellOnlyBackfillHandler implements BackfillRequestHandler {
             return false;
         }
 
+        if (request.getMaxInventorySize() != null && request.getMaxInventorySize() <= 0) {
+            log.warn("Max inventory size must be greater than 0. Current max: {}", request.getMaxInventorySize());
+            return false;
+        }
+
         log.debug("SELL_ONLY backfill request validation passed for item_defindex={}, item_quality_id={}",
                 request.getItemDefindex(), request.getItemQualityId());
         return true;
