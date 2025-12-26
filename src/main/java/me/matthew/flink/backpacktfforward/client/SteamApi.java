@@ -366,8 +366,6 @@ public class SteamApi {
         for (InventoryItem item : inventory.getResult().getItems()) {
             if (item.getDefindex() == targetDefindex && item.getQuality() == targetQuality) {
                 matchingItems.add(item);
-                log.debug("Found matching item: id={}, defindex={}, quality={}", 
-                        item.getId(), item.getDefindex(), item.getQuality());
             }
         }
         
