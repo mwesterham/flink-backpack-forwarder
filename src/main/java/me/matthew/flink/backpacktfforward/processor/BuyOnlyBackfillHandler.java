@@ -182,10 +182,8 @@ public class BuyOnlyBackfillHandler implements BackfillRequestHandler {
         }
 
         String listingId = dbListing.getId();
-        // Buy listings typically have fewer underscores than sell listings
-        // Count underscores to distinguish between buy and sell listing formats
         long underscoreCount = listingId.chars().filter(ch -> ch == '_').count();
-        return underscoreCount <= 1;
+        return underscoreCount == 2;
     }
 
     @Override

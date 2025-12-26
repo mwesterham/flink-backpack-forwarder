@@ -205,7 +205,7 @@ public class SellOnlyBackfillHandler implements BackfillRequestHandler {
         String listingId = sellDbListing.getId();
 
         long underscoreCount = listingId.chars().filter(ch -> ch == '_').count();
-        return underscoreCount >= 2;
+        return underscoreCount  == 1;
     }
 
     @Override
