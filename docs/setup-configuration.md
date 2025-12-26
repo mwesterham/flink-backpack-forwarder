@@ -178,6 +178,10 @@ CREATE TABLE listings (
     bumped_at BIGINT,
     spell_ids TEXT[],
     strange_part_ids TEXT[],
+    paint_id INT,
+    paint_name TEXT,
+    paint_color TEXT,
+    paint_secondary_hex TEXT,
     is_deleted BOOLEAN DEFAULT false,
     created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT,
     updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT

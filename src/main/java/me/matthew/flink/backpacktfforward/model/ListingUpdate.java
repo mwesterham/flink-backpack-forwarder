@@ -106,6 +106,8 @@ public class ListingUpdate {
         public String slot;
         public Particle particle;
         public ItemStyle style;
+        public Paint paint;
+        public String paintSecondaryHex;
         public Boolean tradable;
         public Boolean craftable;
         public String priceindex;
@@ -186,6 +188,14 @@ public class ListingUpdate {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ItemStyle {
         public String name;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Paint {
+        public int id;
+        public String name;
+        public String color;
     }
 
     @Data

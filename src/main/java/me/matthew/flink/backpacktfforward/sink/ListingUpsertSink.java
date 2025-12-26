@@ -36,8 +36,8 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             market_name, status, user_agent_client, user_name, user_premium, user_online,
             user_banned, user_trade_offer_url, item_tradable, item_craftable,
             item_quality_color, item_particle_name, item_particle_type, bumped_at, 
-            spell_ids, strange_part_ids, is_deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)
+            spell_ids, strange_part_ids, paint_id, paint_name, paint_color, paint_secondary_hex, is_deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)
         ON CONFLICT (id) DO UPDATE SET
             steamid = EXCLUDED.steamid,
             item_defindex = EXCLUDED.item_defindex,
@@ -67,6 +67,10 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
             bumped_at = EXCLUDED.bumped_at,
             spell_ids = EXCLUDED.spell_ids,
             strange_part_ids = EXCLUDED.strange_part_ids,
+            paint_id = EXCLUDED.paint_id,
+            paint_name = EXCLUDED.paint_name,
+            paint_color = EXCLUDED.paint_color,
+            paint_secondary_hex = EXCLUDED.paint_secondary_hex,
             is_deleted = false;
         """;
 
@@ -234,6 +238,20 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
                     
                     // Set strange part IDs array
                     stmt.setArray(29, createStrangePartIdsArray(p, connection));
+                    
+                    // Set paint fields
+                    if (p.getItem() != null && p.getItem().getPaint() != null) {
+                        stmt.setInt(30, p.getItem().getPaint().getId());
+                        stmt.setString(31, p.getItem().getPaint().getName());
+                        stmt.setString(32, p.getItem().getPaint().getColor());
+                    } else {
+                        stmt.setNull(30, Types.INTEGER);
+                        stmt.setNull(31, Types.VARCHAR);
+                        stmt.setNull(32, Types.VARCHAR);
+                    }
+                    
+                    // Set paint secondary hex
+                    stmt.setString(33, p.getItem() != null ? p.getItem().getPaintSecondaryHex() : null);
 
                     stmt.addBatch();
                     upsertCounter.inc();
