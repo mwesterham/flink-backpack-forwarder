@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.config.SteamApiConfiguration;
 import me.matthew.flink.backpacktfforward.model.InventoryItem;
 import me.matthew.flink.backpacktfforward.model.SteamInventoryResponse;
+import org.apache.flink.metrics.Counter;
 
 import java.io.IOException;
 import java.net.URI;
@@ -28,6 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * HTTP client for querying Steam Web API to retrieve user inventory data.
  * Follows existing patterns for HTTP communication and error handling.
  * Includes retry logic using Failsafe for resilient API calls.
+ * Tracks metrics for API call success/failure rates.
  */
 @Slf4j
 public class SteamApi {
@@ -42,6 +44,10 @@ public class SteamApi {
     private final ObjectMapper objectMapper;
     private final RetryPolicy<SteamInventoryResponse> retryPolicy;
     
+    // Metrics for tracking API performance
+    private final Counter steamApiCallsSuccess;
+    private final Counter steamApiCallsFailed;
+    
     // Rate limiting state - shared across all instances to prevent multiple clients from overwhelming the API
     private static final ReentrantLock rateLimitLock = new ReentrantLock();
     private static volatile Instant lastApiCall = Instant.EPOCH;
@@ -52,15 +58,12 @@ public class SteamApi {
      * @throws IllegalStateException if the API key is not configured
      */
     public SteamApi() {
-        this(SteamApiConfiguration.getSteamApiKey());
+        this(SteamApiConfiguration.getSteamApiKey(), null, null);
     }
-    
-    /**
-     * Creates a new SteamApi with the specified API key.
-     * 
-     * @param apiKey The Steam API key for authentication
-     */
     public SteamApi(String apiKey) {
+        this(apiKey, null, null);
+    }
+    public SteamApi(String apiKey, Counter steamApiCallsSuccess, Counter steamApiCallsFailed) {
         if (apiKey == null || apiKey.trim().isEmpty()) {
             throw new IllegalArgumentException("Steam API key cannot be null or empty");
         }
@@ -72,6 +75,8 @@ public class SteamApi {
                 .build();
         this.objectMapper = new ObjectMapper();
         this.retryPolicy = createRetryPolicy();
+        this.steamApiCallsSuccess = steamApiCallsSuccess;
+        this.steamApiCallsFailed = steamApiCallsFailed;
     }
     
     /**
@@ -108,12 +113,6 @@ public class SteamApi {
                 .build();
     }
     
-    /**
-     * Determines if an exception represents a retryable HTTP error.
-     * 
-     * @param throwable The exception to check
-     * @return true if the error should be retried
-     */
     private boolean isRetryableHttpError(Throwable throwable) {
         // Handle JSON parsing exceptions - these are often due to corrupted responses
         if (throwable instanceof JsonParseException) {
@@ -139,13 +138,6 @@ public class SteamApi {
         return false;
     }
     
-    /**
-     * Enforces rate limiting by ensuring minimum delay between Steam API calls.
-     * Uses a static lock to coordinate across all instances of the client.
-     * Increases delay during consecutive failures to be more respectful of API limits.
-     * 
-     * @throws InterruptedException if the thread is interrupted while waiting
-     */
     private void enforceRateLimit() throws InterruptedException {
         rateLimitLock.lock();
         try {
@@ -222,20 +214,25 @@ public class SteamApi {
         
         // Handle different HTTP status codes
         if (response.statusCode() == 503) {
+            if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
             log.warn("Steam API returned 503 Service Unavailable. This often indicates API overload or maintenance. Response: {}", response.body());
             throw new IOException("Steam API service unavailable (status 503) - will retry with exponential backoff");
         } else if (response.statusCode() == 429) {
+            if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
             throw new IOException("Rate limited by Steam API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
+            if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
             throw new IOException(String.format(
                     "Steam API server error (status %d): %s", 
                     response.statusCode(), response.body()));
         } else if (response.statusCode() == 401 || response.statusCode() == 403) {
             // Don't retry authentication failures - log and fail fast
+            if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
             log.error("Steam API authentication failed (status {}). Check API key validity and permissions. Response: {}", 
                     response.statusCode(), response.body());
             throw new IOException("Steam API authentication failed - check API key (status " + response.statusCode() + ")");
         } else if (response.statusCode() != 200) {
+            if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
             throw new IOException(String.format(
                     "Steam API request failed with status %d: %s", 
                     response.statusCode(), response.body()));
@@ -252,6 +249,7 @@ public class SteamApi {
             
             // Check if the API call was successful
             if (inventoryResponse.getResult() == null || inventoryResponse.getResult().getStatus() != 1) {
+                if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
                 throw new IOException("Steam API returned unsuccessful status: " + 
                         (inventoryResponse.getResult() != null ? inventoryResponse.getResult().getStatus() : "null"));
             }
@@ -260,8 +258,12 @@ public class SteamApi {
                     inventoryResponse.getResult().getItems().size() : 0;
             log.debug("Successfully parsed Steam inventory with {} items", itemCount);
             
+            // Record successful API call
+            if (steamApiCallsSuccess != null) steamApiCallsSuccess.inc();
+            
             return inventoryResponse;
         } catch (Exception e) {
+            if (steamApiCallsFailed != null) steamApiCallsFailed.inc();
             log.error("Failed to parse Steam API response: {}", sanitizeForLogging(response.body()), e);
             throw new IOException("Failed to parse Steam API response", e);
         }

@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.config.BackpackTfApiConfiguration;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
 import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
+import org.apache.flink.metrics.Counter;
 
 import java.io.IOException;
 import java.net.URI;
@@ -25,6 +26,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * HTTP client for calling the backpack.tf snapshot API.
  * Follows existing patterns for HTTP communication and error handling.
  * Includes retry logic using Failsafe for resilient API calls.
+ * Tracks metrics for API call success/failure rates and latency.
  */
 @Slf4j
 public class BackpackTfApiClient {
@@ -45,6 +47,13 @@ public class BackpackTfApiClient {
     private final RetryPolicy<BackpackTfApiResponse> retryPolicy;
     private final RetryPolicy<BackpackTfListingDetail> getListingRetryPolicy;
     
+    // Metrics for tracking API performance
+    private final Counter backfillApiCallsSuccess;
+    private final Counter backfillApiCallsFailed;
+    private final Counter getListingApiCallsSuccess;
+    private final Counter getListingApiCallsFailed;
+    private volatile long lastApiCallLatency = 0;
+    
     // Separate rate limiting state for each endpoint
     private static final ReentrantLock snapshotRateLimitLock = new ReentrantLock();
     private static volatile Instant lastSnapshotApiCall = Instant.EPOCH;
@@ -58,7 +67,7 @@ public class BackpackTfApiClient {
      * @throws IllegalStateException if the API token is not configured
      */
     public BackpackTfApiClient() {
-        this(BackpackTfApiConfiguration.getApiToken());
+        this(BackpackTfApiConfiguration.getApiToken(), null, null, null, null);
     }
     
     /**
@@ -67,6 +76,11 @@ public class BackpackTfApiClient {
      * @param apiToken The API token for authentication with backpack.tf
      */
     public BackpackTfApiClient(String apiToken) {
+        this(apiToken, null, null, null, null);
+    }
+
+    public BackpackTfApiClient(String apiToken, Counter backfillApiCallsSuccess, Counter backfillApiCallsFailed,
+                              Counter getListingApiCallsSuccess, Counter getListingApiCallsFailed) {
         if (apiToken == null || apiToken.trim().isEmpty()) {
             throw new IllegalArgumentException("API token cannot be null or empty");
         }
@@ -78,6 +92,12 @@ public class BackpackTfApiClient {
         this.objectMapper = new ObjectMapper();
         this.retryPolicy = createRetryPolicy();
         this.getListingRetryPolicy = createGetListingRetryPolicy();
+        
+        // Initialize metrics (can be null for clients that don't need metrics)
+        this.backfillApiCallsSuccess = backfillApiCallsSuccess;
+        this.backfillApiCallsFailed = backfillApiCallsFailed;
+        this.getListingApiCallsSuccess = getListingApiCallsSuccess;
+        this.getListingApiCallsFailed = getListingApiCallsFailed;
     }
     
     /**
@@ -257,6 +277,7 @@ public class BackpackTfApiClient {
         
         log.debug("Making BackpackTF API request to: {}", url.replaceAll("token=[^&]*", "token=***"));
         
+        Long startTime = System.currentTimeMillis();
         HttpResponse<String> response = httpClient.send(request, 
                 HttpResponse.BodyHandlers.ofString());
         
@@ -264,14 +285,18 @@ public class BackpackTfApiClient {
         
         // Handle different HTTP status codes
         if (response.statusCode() == 429) {
+            if (backfillApiCallsFailed != null) backfillApiCallsFailed.inc();
             throw new IOException("Rate limited by BackpackTF API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
+            if (backfillApiCallsFailed != null) backfillApiCallsFailed.inc();
             throw new IOException(String.format(
                     "BackpackTF API server error (status %d): %s", 
                     response.statusCode(), response.body()));
         } else if (response.statusCode() == 401) {
+            if (backfillApiCallsFailed != null) backfillApiCallsFailed.inc();
             throw new IOException("BackpackTF API authentication failed - check API token (status 401)");
         } else if (response.statusCode() != 200) {
+            if (backfillApiCallsFailed != null) backfillApiCallsFailed.inc();
             throw new IOException(String.format(
                     "BackpackTF API request failed with status %d: %s", 
                     response.statusCode(), response.body()));
@@ -284,8 +309,13 @@ public class BackpackTfApiClient {
             log.debug("Successfully parsed BackpackTF API response with {} listings", 
                     apiResponse.getListings() != null ? apiResponse.getListings().size() : 0);
             
+            // Record successful API call
+            if (backfillApiCallsSuccess != null) backfillApiCallsSuccess.inc();
+            lastApiCallLatency = System.currentTimeMillis() - startTime;
+            
             return apiResponse;
         } catch (Exception e) {
+            if (backfillApiCallsFailed != null) backfillApiCallsFailed.inc();
             log.error("Failed to parse BackpackTF API response: {}", response.body(), e);
             throw new IOException("Failed to parse BackpackTF API response", e);
         }
@@ -345,16 +375,22 @@ public class BackpackTfApiClient {
         
         // Handle different HTTP status codes
         if (response.statusCode() == 429) {
+            if (getListingApiCallsFailed != null) getListingApiCallsFailed.inc();
             throw new IOException("Rate limited by BackpackTF getListing API (status 429) - will retry with exponential backoff");
         } else if (response.statusCode() >= 500) {
+            if (getListingApiCallsFailed != null) getListingApiCallsFailed.inc();
             throw new IOException(String.format(
                     "BackpackTF getListing API server error (status %d): %s", 
                     response.statusCode(), response.body()));
         } else if (response.statusCode() == 401) {
+            if (getListingApiCallsFailed != null) getListingApiCallsFailed.inc();
             throw new IOException("BackpackTF getListing API authentication failed - check API token (status 401)");
         } else if (response.statusCode() == 404) {
-            return null; // this is a valid case, we want to return null
+            // 404 is a valid case for getListing - item not found
+            if (getListingApiCallsSuccess != null) getListingApiCallsSuccess.inc();
+            return null;
         } else if (response.statusCode() != 200) {
+            if (getListingApiCallsFailed != null) getListingApiCallsFailed.inc();
             throw new IOException(String.format(
                     "BackpackTF getListing API request failed with status %d: %s", 
                     response.statusCode(), response.body()));
@@ -366,11 +402,24 @@ public class BackpackTfApiClient {
             
             log.debug("Successfully parsed BackpackTF getListing API response for item ID: {}", itemId);
             
+            // Record successful API call
+            if (getListingApiCallsSuccess != null) getListingApiCallsSuccess.inc();
+            
             return listingDetail;
         } catch (Exception e) {
+            if (getListingApiCallsFailed != null) getListingApiCallsFailed.inc();
             log.error("Failed to parse BackpackTF getListing API response for item ID {}: {}", 
                     itemId, response.body(), e);
             throw new IOException("Failed to parse BackpackTF getListing API response", e);
         }
+    }
+    
+    /**
+     * Gets the last API call latency for monitoring purposes.
+     * 
+     * @return Last API call latency in milliseconds
+     */
+    public long getLastApiCallLatency() {
+        return lastApiCallLatency;
     }
 }

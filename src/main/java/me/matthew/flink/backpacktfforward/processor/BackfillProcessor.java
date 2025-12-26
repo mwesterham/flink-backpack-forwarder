@@ -4,30 +4,21 @@ import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
 import me.matthew.flink.backpacktfforward.client.SteamApi;
+import me.matthew.flink.backpacktfforward.config.BackpackTfApiConfiguration;
+import me.matthew.flink.backpacktfforward.config.SteamApiConfiguration;
 import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
-import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
-import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
-import me.matthew.flink.backpacktfforward.model.InventoryItem;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
-import me.matthew.flink.backpacktfforward.model.SourceOfTruthListing;
-import me.matthew.flink.backpacktfforward.model.SteamInventoryResponse;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequestType;
 import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
-import me.matthew.flink.backpacktfforward.util.ListingIdGenerator;
-import me.matthew.flink.backpacktfforward.util.ListingUpdateMapper;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Gauge;
 import org.apache.flink.util.Collector;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.*;
 
@@ -58,27 +49,12 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
     private transient SteamApi steamApi;
     private transient BackfillRequestFactory requestFactory;
     
-    // Metrics for comprehensive monitoring
+    // Core metrics for processor-level monitoring
     private transient Counter backfillRequestsProcessed;
     private transient Counter backfillRequestsFailed;
-    private transient Counter backfillApiCallsSuccess;
-    private transient Counter backfillApiCallsFailed;
-    private transient Counter backfillStaleListingsDetected;
-    private transient Counter backfillListingsUpdated;
     
     // Performance tracking - using simple counters for latency tracking
-    private volatile long lastApiCallLatency = 0;
     private volatile long lastProcessingTime = 0;
-    
-    // Additional detailed metrics
-    private transient Counter steamApiCallsSuccess;
-    private transient Counter steamApiCallsFailed;
-    private transient Counter getListingApiCallsSuccess;
-    private transient Counter getListingApiCallsFailed;
-    private transient Counter databaseQueriesSuccess;
-    private transient Counter databaseQueriesFailed;
-    private transient Counter itemsMatched;
-    private transient Counter sourceOfTruthListingsCreated;
     
     /**
      * Creates a new BackfillProcessor with database connection parameters.
@@ -100,36 +76,25 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         // Initialize metrics
         var metricGroup = getRuntimeContext().getMetricGroup();
         
-        // Existing metrics
+        // Core processor metrics
         backfillRequestsProcessed = metricGroup.counter(BACKFILL_REQUESTS_PROCESSED);
         backfillRequestsFailed = metricGroup.counter(BACKFILL_REQUESTS_FAILED);
-        backfillApiCallsSuccess = metricGroup.counter(BACKFILL_API_CALLS_SUCCESS);
-        backfillApiCallsFailed = metricGroup.counter(BACKFILL_API_CALLS_FAILED);
-        backfillStaleListingsDetected = metricGroup.counter(BACKFILL_STALE_LISTINGS_DETECTED);
-        backfillListingsUpdated = metricGroup.counter(BACKFILL_LISTINGS_UPDATED);
         
-        // Performance tracking gauges
-        metricGroup.gauge(BACKFILL_LAST_API_CALL_LATENCY, new Gauge<Long>() {
-            @Override
-            public Long getValue() {
-                return lastApiCallLatency;
-            }
-        });
-        
+        // Performance tracking gauge
         metricGroup.gauge(BACKFILL_LAST_PROCESSING_TIME, new Gauge<Long>() {
             @Override
             public Long getValue() {
                 return lastProcessingTime;
             }
         });
-        steamApiCallsSuccess = metricGroup.counter(STEAM_API_CALLS_SUCCESS);
-        steamApiCallsFailed = metricGroup.counter(STEAM_API_CALLS_FAILED);
-        getListingApiCallsSuccess = metricGroup.counter(GET_LISTING_API_CALLS_SUCCESS);
-        getListingApiCallsFailed = metricGroup.counter(GET_LISTING_API_CALLS_FAILED);
-        databaseQueriesSuccess = metricGroup.counter(DATABASE_QUERIES_SUCCESS);
-        databaseQueriesFailed = metricGroup.counter(DATABASE_QUERIES_FAILED);
-        itemsMatched = metricGroup.counter(ITEMS_MATCHED);
-        sourceOfTruthListingsCreated = metricGroup.counter(SOURCE_OF_TRUTH_LISTINGS_CREATED);
+        
+        // Initialize client metrics
+        Counter backfillApiCallsSuccess = metricGroup.counter(BACKFILL_API_CALLS_SUCCESS);
+        Counter backfillApiCallsFailed = metricGroup.counter(BACKFILL_API_CALLS_FAILED);
+        Counter getListingApiCallsSuccess = metricGroup.counter(GET_LISTING_API_CALLS_SUCCESS);
+        Counter getListingApiCallsFailed = metricGroup.counter(GET_LISTING_API_CALLS_FAILED);
+        Counter steamApiCallsSuccess = metricGroup.counter(STEAM_API_CALLS_SUCCESS);
+        Counter steamApiCallsFailed = metricGroup.counter(STEAM_API_CALLS_FAILED);
         
         // Initialize retry policy using existing SqlRetryMetrics patterns
         SqlRetryMetrics sqlRetryMetrics = new SqlRetryMetrics(
@@ -141,17 +106,27 @@ public class BackfillProcessor extends RichFlatMapFunction<BackfillRequest, List
         // Initialize database helper with existing connection patterns
         databaseHelper = new DatabaseHelper(jdbcUrl, username, password, retryPolicy);
         
-        // Initialize API client
-        apiClient = new BackpackTfApiClient();
+        // Initialize API client with metrics
+        apiClient = new BackpackTfApiClient(
+                BackpackTfApiConfiguration.getApiToken(),
+                backfillApiCallsSuccess,
+                backfillApiCallsFailed,
+                getListingApiCallsSuccess,
+                getListingApiCallsFailed
+        );
         
-        // Initialize Steam API client
-        steamApi = new SteamApi();
+        // Initialize Steam API client with metrics
+        steamApi = new SteamApi(
+                SteamApiConfiguration.getSteamApiKey(),
+                steamApiCallsSuccess,
+                steamApiCallsFailed
+        );
         
         // Initialize request factory with all handlers
         initializeRequestFactory();
         
         log.info("BackfillProcessor initialized with DatabaseHelper, BackpackTF API client, Steam API client, and request factory");
-        log.info("Metrics initialized: processing_time, api_latency, success/failure counters for all operations");
+        log.info("Metrics initialized: processing_time, success/failure counters for all operations");
     }
     
     /**

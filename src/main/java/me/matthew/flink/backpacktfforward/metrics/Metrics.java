@@ -37,10 +37,6 @@ public final class Metrics {
     public static final String DATABASE_QUERIES_SUCCESS = "database_queries_success";
     public static final String DATABASE_QUERIES_FAILED = "database_queries_failed";
 
-    // Item processing metrics
-    public static final String ITEMS_MATCHED = "items_matched";
-    public static final String SOURCE_OF_TRUTH_LISTINGS_CREATED = "source_of_truth_listings_created";
-
     // Conflict resolution metrics
     public static final String CONFLICT_WRITES_SKIPPED = "conflict_writes_skipped";
     public static final String CONFLICT_WRITES_ALLOWED = "conflict_writes_allowed";
