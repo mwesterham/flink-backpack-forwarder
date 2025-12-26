@@ -33,16 +33,6 @@ public class SingleIdBackfillHandler implements BackfillRequestHandler {
 
         // Step 1: Query database for the specific listing ID
         DatabaseHelper.ExistingListing dbListing = databaseHelper.getSingleListingById(listingId);
-        if (dbListing == null) {
-            log.info("Listing ID {} not found in database or is deleted. No processing needed.", listingId);
-            long totalProcessingTime = System.currentTimeMillis() - processingStartTime;
-            log.info("SINGLE_ID backfill processing completed in {}ms (no database record found)", totalProcessingTime);
-            return;
-        }
-
-        log.info("Found database listing: id={}, steamid={}, market_name={}, item_defindex={}, item_quality_id={}",
-                dbListing.getId(), dbListing.getSteamid(), dbListing.getMarketName(),
-                dbListing.getItemDefindex(), dbListing.getItemQualityId());
 
         // Step 2: Call BackpackTF getListing API directly with the provided ID
         BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
@@ -54,12 +44,15 @@ public class SingleIdBackfillHandler implements BackfillRequestHandler {
             out.collect(updateEvent);
             log.debug("Emitted listing-update event for buy listing ID: {} with generation_timestamp: {}",
                     listingId, generationTimestamp);
-        } else {
+        } else if (dbListing != null) {
             ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteEvent(
                     listingId, dbListing.getSteamid(), generationTimestamp);
             out.collect(deleteEvent);
             log.debug("Emitted listing-delete event for buy listing ID: {} with generation_timestamp: {}",
                     listingId, generationTimestamp);
+        } else {
+            log.debug("Both backpack tf and the database are in sync and have no listing ID: {}.",
+                    listingId);
         }
 
         long totalProcessingTime = System.currentTimeMillis() - processingStartTime;

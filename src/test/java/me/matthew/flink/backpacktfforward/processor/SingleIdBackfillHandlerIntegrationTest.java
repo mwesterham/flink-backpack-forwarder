@@ -127,7 +127,7 @@ class SingleIdBackfillHandlerIntegrationTest {
         assertTrue(results.isEmpty(), "Should not generate any events when listing not found in database");
         
         verify(mockDatabaseHelper).getSingleListingById(listingId);
-        verifyNoInteractions(mockApiClient);
+        verify(mockApiClient).getListing(listingId);
     }
     
     @Test
