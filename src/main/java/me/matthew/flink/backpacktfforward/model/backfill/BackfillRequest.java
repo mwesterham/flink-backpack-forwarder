@@ -10,6 +10,7 @@ import lombok.AllArgsConstructor;
 /**
  * Model class for backfill request messages consumed from Kafka.
  * Contains item identifiers needed to trigger API-based data refresh.
+ * Extended to support multiple request types with optional parameters.
  */
 @Data
 @NoArgsConstructor
@@ -35,4 +36,25 @@ public class BackfillRequest {
      */
     @JsonIgnore
     private String marketName;
+    
+    /**
+     * Type of backfill request to perform. Defaults to FULL for backward compatibility.
+     * Optional field that determines the processing strategy and filtering behavior.
+     */
+    @JsonProperty("request_type")
+    private BackfillRequestType requestType;
+    
+    /**
+     * Specific listing ID for SINGLE_ID request types.
+     * When present, only this specific listing will be processed.
+     */
+    @JsonProperty("listing_id")
+    private String listingId;
+    
+    /**
+     * Maximum inventory size threshold for INVENTORY_FILTERED request types.
+     * Users with more than this number of matching items will be skipped.
+     */
+    @JsonProperty("max_inventory_size")
+    private Integer maxInventorySize;
 }

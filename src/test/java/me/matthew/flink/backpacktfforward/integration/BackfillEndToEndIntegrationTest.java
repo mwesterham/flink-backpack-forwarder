@@ -4,13 +4,19 @@ import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
 import me.matthew.flink.backpacktfforward.client.SteamApi;
 import me.matthew.flink.backpacktfforward.model.*;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequestType;
 import me.matthew.flink.backpacktfforward.processor.BackfillProcessor;
+import me.matthew.flink.backpacktfforward.processor.BackfillRequestFactory;
+import me.matthew.flink.backpacktfforward.processor.FullBackfillHandler;
 import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.apache.flink.util.Collector;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import java.util.*;
@@ -31,6 +37,7 @@ class BackfillEndToEndIntegrationTest {
     private DatabaseHelper mockDatabaseHelper;
     private BackpackTfApiClient mockBackpackTfClient;
     private SteamApi mockSteamApi;
+    private BackfillRequestFactory mockRequestFactory;
     private TestCollector collector;
     
     @BeforeEach
@@ -39,6 +46,7 @@ class BackfillEndToEndIntegrationTest {
         mockDatabaseHelper = mock(DatabaseHelper.class);
         mockBackpackTfClient = mock(BackpackTfApiClient.class);
         mockSteamApi = mock(SteamApi.class);
+        mockRequestFactory = mock(BackfillRequestFactory.class);
         
         // Create processor with test database configuration
         processor = new BackfillProcessor("jdbc:h2:mem:test", "test", "test");
@@ -86,8 +94,12 @@ class BackfillEndToEndIntegrationTest {
             var steamField = BackfillProcessor.class.getDeclaredField("steamApi");
             steamField.setAccessible(true);
             steamField.set(processor, mockSteamApi);
+
+            var requestFactory = BackfillProcessor.class.getDeclaredField("requestFactory");
+            requestFactory.setAccessible(true);
+            requestFactory.set(processor, mockRequestFactory);
             
-            log.debug("Successfully injected mocks into BackfillProcessor");
+            log.debug("Successfully injected mocks into BackfillProcessor and reinitialized request factory");
         } catch (Exception e) {
             log.warn("Failed to inject mocks via reflection: {}", e.getMessage());
             // Test will likely fail, but we'll continue to see what happens
@@ -108,6 +120,7 @@ class BackfillEndToEndIntegrationTest {
         BackfillRequest request = new BackfillRequest();
         request.setItemDefindex(190); // Strange Bat
         request.setItemQualityId(11); // Strange quality
+        request.setRequestType(BackfillRequestType.FULL);
         
         // Mock database response - existing listings for this item
         List<DatabaseHelper.ExistingListing> existingListings = Arrays.asList(
@@ -139,6 +152,8 @@ class BackfillEndToEndIntegrationTest {
         BackpackTfListingDetail listingDetail2 = createSampleListingDetail("440_16525961481", "76561199574661226");
         when(mockBackpackTfClient.getListing("440_16525961480")).thenReturn(listingDetail1);
         when(mockBackpackTfClient.getListing("440_16525961481")).thenReturn(listingDetail2);
+
+        when(mockRequestFactory.getHandler(any(BackfillRequest.class))).thenReturn(new FullBackfillHandler(mockDatabaseHelper, mockBackpackTfClient, mockSteamApi));
         
         // Act: Process the backfill request
         processor.flatMap(request, collector);
@@ -284,7 +299,10 @@ class BackfillEndToEndIntegrationTest {
         BackfillRequest request = new BackfillRequest();
         request.setItemDefindex(190);
         request.setItemQualityId(11);
-        
+        request.setRequestType(BackfillRequestType.FULL);
+
+        when(mockRequestFactory.getHandler(any(BackfillRequest.class))).thenReturn(new FullBackfillHandler(mockDatabaseHelper, mockBackpackTfClient, mockSteamApi));
+
         // Create larger dataset (50 existing listings)
         List<DatabaseHelper.ExistingListing> largeDataset = new ArrayList<>();
         for (int i = 0; i < 50; i++) {

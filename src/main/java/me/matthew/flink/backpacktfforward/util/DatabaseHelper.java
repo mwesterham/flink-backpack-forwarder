@@ -3,7 +3,6 @@ package me.matthew.flink.backpacktfforward.util;
 import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
-import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -49,6 +48,12 @@ public class DatabaseHelper {
         FROM listings 
         WHERE item_defindex = ? AND item_quality_id = ? AND is_deleted = false
         ORDER BY updated_at DESC
+        """;
+    
+    private static final String SINGLE_LISTING_BY_ID_QUERY = """
+        SELECT id, steamid, market_name, item_defindex, item_quality_id
+        FROM listings 
+        WHERE id = ? AND is_deleted = false
         """;
     
     private final String jdbcUrl;
@@ -113,17 +118,31 @@ public class DatabaseHelper {
         private final String id;
         private final String steamid;
         private final String marketName;
+        private final Integer itemDefindex;
+        private final Integer itemQualityId;
         
         public ExistingListing(String id, String steamid) {
             this.id = id;
             this.steamid = steamid;
             this.marketName = null;
+            this.itemDefindex = null;
+            this.itemQualityId = null;
         }
         
         public ExistingListing(String id, String steamid, String marketName) {
             this.id = id;
             this.steamid = steamid;
             this.marketName = marketName;
+            this.itemDefindex = null;
+            this.itemQualityId = null;
+        }
+        
+        public ExistingListing(String id, String steamid, String marketName, Integer itemDefindex, Integer itemQualityId) {
+            this.id = id;
+            this.steamid = steamid;
+            this.marketName = marketName;
+            this.itemDefindex = itemDefindex;
+            this.itemQualityId = itemQualityId;
         }
         
         public String getId() {
@@ -136,6 +155,14 @@ public class DatabaseHelper {
         
         public String getMarketName() {
             return marketName;
+        }
+        
+        public Integer getItemDefindex() {
+            return itemDefindex;
+        }
+        
+        public Integer getItemQualityId() {
+            return itemQualityId;
         }
     }
     
@@ -244,6 +271,44 @@ public class DatabaseHelper {
                     } else {
                         log.debug("No existing listing ID found for market_name={}, steamid={}", 
                                 marketName, steamId);
+                        return null;
+                    }
+                }
+            }
+        });
+    }
+    
+    /**
+     * Queries the database for a single listing by its ID.
+     * Returns complete listing information if found, null if the listing doesn't exist or is deleted.
+     * 
+     * @param listingId The specific listing ID to query
+     * @return ExistingListing with complete information if found, null if not found or deleted
+     * @throws SQLException if database query fails after retries
+     */
+    public ExistingListing getSingleListingById(String listingId) throws SQLException {
+        log.debug("Querying single listing by ID: {}", listingId);
+        
+        return Failsafe.with(retryPolicy).get(() -> {
+            try (Connection connection = createConnection();
+                 PreparedStatement stmt = connection.prepareStatement(SINGLE_LISTING_BY_ID_QUERY)) {
+                
+                stmt.setString(1, listingId);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        String id = rs.getString("id");
+                        String steamid = rs.getString("steamid");
+                        String marketName = rs.getString("market_name");
+                        Integer itemDefindex = rs.getInt("item_defindex");
+                        Integer itemQualityId = rs.getInt("item_quality_id");
+                        
+                        ExistingListing listing = new ExistingListing(id, steamid, marketName, itemDefindex, itemQualityId);
+                        log.debug("Found listing: id={}, steamid={}, market_name={}, item_defindex={}, item_quality_id={}", 
+                                id, steamid, marketName, itemDefindex, itemQualityId);
+                        return listing;
+                    } else {
+                        log.debug("No listing found for ID: {}", listingId);
                         return null;
                     }
                 }

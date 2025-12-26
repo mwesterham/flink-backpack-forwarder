@@ -3,6 +3,7 @@ package me.matthew.flink.backpacktfforward.integration;
 import me.matthew.flink.backpacktfforward.WebSocketForwarderJob;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequestType;
 import me.matthew.flink.backpacktfforward.parser.BackfillMessageParser;
 import me.matthew.flink.backpacktfforward.parser.KafkaMessageParser;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
@@ -37,6 +38,7 @@ class BackfillCompatibilityIntegrationTest {
         BackfillRequest request = new BackfillRequest();
         request.setItemDefindex(190);
         request.setItemQualityId(11);
+        request.setRequestType(BackfillRequestType.FULL);
         
         // Verify all expected fields are accessible
         assertEquals(190, request.getItemDefindex());
@@ -54,7 +56,7 @@ class BackfillCompatibilityIntegrationTest {
         }
         
         // Test constructor with parameters (AllArgsConstructor includes marketName)
-        BackfillRequest requestWithParams = new BackfillRequest(266, 5, null);
+        BackfillRequest requestWithParams = new BackfillRequest(266, 5, null, BackfillRequestType.FULL, null, null);
         assertEquals(266, requestWithParams.getItemDefindex());
         assertEquals(5, requestWithParams.getItemQualityId());
         assertNull(requestWithParams.getMarketName());
@@ -64,7 +66,7 @@ class BackfillCompatibilityIntegrationTest {
         assertTrue(request.toString().contains("itemDefindex"));
         assertTrue(request.toString().contains("itemQualityId"));
         
-        BackfillRequest request2 = new BackfillRequest(190, 11, null);
+        BackfillRequest request2 = new BackfillRequest(190, 11, null, BackfillRequestType.FULL, null, null);
         assertEquals(request, request2);
         assertEquals(request.hashCode(), request2.hashCode());
     }

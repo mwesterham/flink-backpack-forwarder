@@ -3,6 +3,7 @@ package me.matthew.flink.backpacktfforward.model;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
+import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequestType;
 
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,7 +18,7 @@ public class BackfillKafkaMessageTest {
     @Test
     public void testJsonSerialization() throws Exception {
         // Create a BackfillKafkaMessage with nested BackfillRequest
-        BackfillRequest request = new BackfillRequest(463, 5, null);
+        BackfillRequest request = new BackfillRequest(463, 5, null, BackfillRequestType.FULL, null, null);
         BackfillKafkaMessage message = new BackfillKafkaMessage(
             request, 
             "2023-12-22T10:30:00Z", 
@@ -67,7 +68,7 @@ public class BackfillKafkaMessageTest {
     @Test
     public void testJsonRoundTrip() throws Exception {
         // Create original message
-        BackfillRequest request = new BackfillRequest(789, 11, null);
+        BackfillRequest request = new BackfillRequest(789, 11, null, BackfillRequestType.FULL, null, null);
         BackfillKafkaMessage original = new BackfillKafkaMessage(
             request, 
             "2023-12-22T15:45:30Z", 
