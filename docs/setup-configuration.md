@@ -156,7 +156,7 @@ CREATE TABLE listings (
     intent TEXT NOT NULL,
     appid INT,
     metal DOUBLE PRECISION,
-    keys INT,
+    keys DOUBLE PRECISION,
     raw_value DOUBLE PRECISION,
     short_value TEXT,
     long_value TEXT,

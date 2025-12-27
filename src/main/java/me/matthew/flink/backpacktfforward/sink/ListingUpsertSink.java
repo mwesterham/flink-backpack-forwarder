@@ -203,8 +203,8 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
                     else stmt.setNull(7, Types.DOUBLE);
 
                     if (p.getCurrencies() != null && p.getCurrencies().getKeys() != null)
-                        stmt.setInt(8, p.getCurrencies().getKeys().intValue());
-                    else stmt.setNull(8, Types.INTEGER);
+                        stmt.setDouble(8, p.getCurrencies().getKeys().doubleValue());
+                    else stmt.setNull(8, Types.DOUBLE);
 
                     if (p.getValue() != null)
                         stmt.setDouble(9, p.getValue().getRaw());
