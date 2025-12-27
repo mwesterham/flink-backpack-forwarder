@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.Data;
 
 import java.io.IOException;
@@ -96,6 +97,7 @@ public class ListingUpdate {
         public String originalId;
         public Quality quality;
         public String summary;
+        @JsonDeserialize(using = ItemPriceDeserializer.class)
         public ItemPrice price;
         public Integer level;
         public List<Equipped> equipped;
@@ -219,6 +221,30 @@ public class ListingUpdate {
         public int id;
         public String name;
         public Item item;
+    }
+
+    public static class ItemPriceDeserializer extends JsonDeserializer<ItemPrice> {
+        @Override
+        public ItemPrice deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+            ObjectMapper mapper = (ObjectMapper) p.getCodec();
+            JsonNode node = mapper.readTree(p);
+            
+            // If it's an object with steam/community/suggested, deserialize directly
+            if (node.isObject() && (node.has("steam") || node.has("community") || node.has("suggested"))) {
+                return mapper.treeToValue(node, ItemPrice.class);
+            }
+            
+            // If it's an array or other format, return null or create empty ItemPrice
+            // This handles legacy cases where price might be in array format
+            if (node.isArray()) {
+                // For array format, we could try to extract the first element if it matches our structure
+                // but for now, we'll return null to avoid errors
+                return null;
+            }
+            
+            // For any other case, try to deserialize as ItemPrice (might be null)
+            return mapper.treeToValue(node, ItemPrice.class);
+        }
     }
 
     public static class PriceDeserializer extends JsonDeserializer<List<Price>> {
