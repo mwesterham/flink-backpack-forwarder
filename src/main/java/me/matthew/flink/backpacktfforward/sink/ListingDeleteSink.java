@@ -95,39 +95,20 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
 
     @Override
     public void invoke(ListingUpdate lu, Context context) throws Exception {
-        // Validate ListingUpdate object for backward compatibility and robustness
         if (!ConflictResolutionUtil.isValidListingUpdate(lu)) {
             log.warn("Received invalid ListingUpdate - skipping processing");
             return;
         }
         
-        // Fast path: Real-time updates (null generation timestamp) always proceed without database queries
-        if (lu.getGenerationTimestamp() == null) {
-            realTimeWritesCounter.inc();
-            batch.add(lu);
-        } else {
-            // Only apply conflict resolution for backfill updates (non-null generation timestamp)
-            try {
-                ListingUpdateConflictResolutionRequest request = new ListingUpdateConflictResolutionRequest(lu);
-                boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(request, connection);
-                
-                if (!shouldSkip) {
-                    batch.add(lu);
-                }
-                // If shouldSkip is true, the update is filtered out and metrics are already incremented by ConflictResolutionUtil
-                
-            } catch (SQLException e) {
-                // Enhanced error handling: ConflictResolutionUtil now handles most errors gracefully,
-                // but if SQLException is still thrown, it indicates a serious database connectivity issue
-                log.error("Critical database error during conflict resolution for listing {} - attempting to proceed with delete to maintain availability", 
-                        lu.getPayload().getId(), e);
-                batch.add(lu);
-            } catch (Exception e) {
-                // Catch any other unexpected errors to prevent processing pipeline from failing
-                log.error("Unexpected error during conflict resolution for listing {} - proceeding with delete to maintain system stability", 
-                        lu.getPayload().getId(), e);
-                batch.add(lu);
+        ListingUpdateConflictResolutionRequest request = new ListingUpdateConflictResolutionRequest(lu);
+        boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(request, connection);
+        
+        if (!shouldSkip) {
+            // Track real-time vs backfill writes separately for monitoring
+            if (lu.getGenerationTimestamp() == null) {
+                realTimeWritesCounter.inc();
             }
+            batch.add(lu);
         }
 
         long now = System.currentTimeMillis();
