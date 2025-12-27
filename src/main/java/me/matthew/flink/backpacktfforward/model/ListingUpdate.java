@@ -113,7 +113,7 @@ public class ListingUpdate {
         public Boolean tradable;
         public Boolean craftable;
         public String priceindex;
-        public String tag;
+        public Object tag;
     }
 
 
