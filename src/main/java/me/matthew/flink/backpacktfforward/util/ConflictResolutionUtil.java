@@ -24,7 +24,7 @@ import java.time.Duration;
 public class ConflictResolutionUtil {
     
     private static final String LAST_UPDATED_QUERY = """
-        SELECT updated_at 
+        SELECT updated_at, listed_at, bumped_at 
         FROM listings 
         WHERE id = ?
         """;
@@ -34,116 +34,129 @@ public class ConflictResolutionUtil {
     
     private final Counter conflictSkippedCounter;
     private final Counter conflictAllowedCounter;
-    
-    /**
-     * Creates a new ConflictResolutionUtil with the provided metrics counters.
-     * 
-     * @param conflictSkippedCounter Counter for writes skipped due to conflicts
-     * @param conflictAllowedCounter Counter for writes allowed after timestamp comparison
-     */
+
     public ConflictResolutionUtil(Counter conflictSkippedCounter, 
                                   Counter conflictAllowedCounter) {
         this.conflictSkippedCounter = conflictSkippedCounter;
         this.conflictAllowedCounter = conflictAllowedCounter;
     }
-    
-    /**
-     * Determines whether a write operation should be skipped based on timestamp conflict resolution.
-     * Implements the conflict resolution logic following the design decision matrix with robust
-     * error handling for timezone differences, clock skew, and parsing failures.
-     * 
-     * Error Handling Strategy:
-     * - Timestamp parsing failures: Log error and default to allow write
-     * - Database query failures: Log error and default to allow write (availability over consistency)
-     * - Clock skew: Apply tolerance of 5 minutes to handle reasonable time differences
-     * - Timezone differences: All timestamps normalized to UTC for comparison
-     * 
-     * Decision Matrix:
-     * - If database record doesn't exist: allow write
-     * - If database updated_at is null: allow write
-     * - If generation timestamp is invalid: log error and allow write
-     * - If database updated_at is newer than generationTimestamp (accounting for clock skew): skip write
-     * - If database updated_at is older or equal to generationTimestamp: allow write
-     * 
-     * NOTE: This method assumes generationTimestamp is NOT null. Real-time updates should be
-     * handled by the caller before calling this method.
-     * 
-     * @param listingId The ID of the listing being written
-     * @param generationTimestamp The timestamp when the backfill data was generated (must not be null)
-     * @param connection Database connection for querying last_updated timestamp
-     * @return true if the write should be skipped, false if it should proceed
-     * @throws SQLException if database query fails and cannot be handled gracefully
-     */
+
     public boolean shouldSkipWrite(String listingId, Long generationTimestamp, Connection connection) throws SQLException {
-        // Validate and convert generation timestamp with error handling
-        Instant generationInstant;
-        try {
-            if (generationTimestamp == null) {
-                log.warn("Received null generation timestamp for listing {} - this should be handled by caller", listingId);
-                conflictAllowedCounter.inc();
-                return false;
-            }
-            
-            generationInstant = Instant.ofEpochMilli(generationTimestamp);
-            
-            // Validate timestamp is reasonable (not too far in future/past)
-            Instant now = Instant.now();
-            Duration ageFromNow = Duration.between(generationInstant, now).abs();
-            if (ageFromNow.toDays() > 365) {
-                log.warn("Generation timestamp {} for listing {} is more than 1 year from current time - proceeding with write but this may indicate a data issue", 
-                        generationInstant, listingId);
-            }
-            
-        } catch (DateTimeException | ArithmeticException e) {
-            log.error("Failed to parse generation timestamp {} for listing {} - defaulting to allow write", 
-                    generationTimestamp, listingId, e);
-            conflictAllowedCounter.inc();
-            return false;
-        }
+        // Create a simple request object for backward compatibility
+        ConflictResolutionRequest request = new ConflictResolutionRequest() {
+            @Override
+            public String getListingId() { return listingId; }
+            @Override
+            public Long getGenerationTimestamp() { return generationTimestamp; }
+            @Override
+            public Long getListedAt() { return null; }
+            @Override
+            public Long getBumpedAt() { return null; }
+        };
         
-        // Query database for last_updated timestamp with comprehensive error handling
+        return shouldSkipWrite(request, connection);
+    }
+
+    public boolean shouldSkipWrite(ConflictResolutionRequest request, Connection connection) throws SQLException {
+        String listingId = request.getListingId();
+        Long generationTimestamp = request.getGenerationTimestamp();
+        Long incomingListedAt = request.getListedAt();
+        Long incomingBumpedAt = request.getBumpedAt();
+        
+        // Query database for timestamps with comprehensive error handling
         try (PreparedStatement stmt = connection.prepareStatement(LAST_UPDATED_QUERY)) {
             stmt.setString(1, listingId);
             
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
                     Long lastUpdatedMillis = rs.getLong("updated_at");
+                    boolean lastUpdatedWasNull = rs.wasNull();
                     
-                    if (!rs.wasNull() && lastUpdatedMillis != null) {
-                        Instant lastUpdatedInstant;
-                        try {
-                            lastUpdatedInstant = Instant.ofEpochMilli(lastUpdatedMillis);
-                        } catch (DateTimeException e) {
-                            log.error("Failed to parse database timestamp {} for listing {} - defaulting to allow write", 
-                                    lastUpdatedMillis, listingId, e);
-                            conflictAllowedCounter.inc();
-                            return false;
-                        }
-                        
-                        // Apply clock skew tolerance: only skip if database timestamp is significantly newer
-                        Duration timeDifference = Duration.between(generationInstant, lastUpdatedInstant);
-                        boolean isSignificantlyNewer = timeDifference.compareTo(CLOCK_SKEW_TOLERANCE) > 0;
-                        
-                        if (isSignificantlyNewer) {
-                            log.info("Skipping write for listing {} - database last_updated {} is significantly newer than generation_timestamp {} (difference: {} seconds, tolerance: {} seconds)", 
-                                    listingId, lastUpdatedInstant, generationInstant, 
-                                    timeDifference.getSeconds(), CLOCK_SKEW_TOLERANCE.getSeconds());
+                    Long dbListedAt = rs.getLong("listed_at");
+                    boolean listedAtWasNull = rs.wasNull();
+                    
+                    Long dbBumpedAt = rs.getLong("bumped_at");
+                    boolean bumpedAtWasNull = rs.wasNull();
+                    
+                    // Handle null values from database
+                    if (lastUpdatedWasNull) {
+                        lastUpdatedMillis = null;
+                    }
+                    if (listedAtWasNull) {
+                        dbListedAt = null;
+                    }
+                    if (bumpedAtWasNull) {
+                        dbBumpedAt = null;
+                    }
+                    
+                    // Check listed_at and bumped_at timestamps first (if available)
+                    if (incomingListedAt != null && dbListedAt != null) {
+                        if (incomingListedAt < dbListedAt) {
                             conflictSkippedCounter.inc();
                             return true;
-                        } else {
-                            if (timeDifference.getSeconds() > 0) {
-                                log.debug("Allowing write for listing {} - database last_updated {} is newer than generation_timestamp {} but within clock skew tolerance (difference: {} seconds)", 
-                                        listingId, lastUpdatedInstant, generationInstant, timeDifference.getSeconds());
-                            } else {
-                                log.debug("Allowing write for listing {} - generation_timestamp {} is newer than or equal to database last_updated {}", 
-                                        listingId, generationInstant, lastUpdatedInstant);
-                            }
-                            conflictAllowedCounter.inc();
-                            return false;
                         }
+                    }
+                    
+                    if (incomingBumpedAt != null && dbBumpedAt != null) {
+                        if (incomingBumpedAt < dbBumpedAt) {
+                            conflictSkippedCounter.inc();
+                            return true;
+                        }
+                    }
+                    
+                    if (generationTimestamp == null) {
+                        log.info("Received null generation timestamp for listing {} - this should be handled by caller", listingId);
+                        conflictAllowedCounter.inc();
+                        return false;
+                    }
+                    // Only now validate and convert generation timestamp since we need it for comparison
+                    Instant generationInstant;
+                    try {
+                        generationInstant = Instant.ofEpochMilli(generationTimestamp);
+                        
+                        // Validate timestamp is reasonable (not too far in future/past)
+                        Instant now = Instant.now();
+                        Duration ageFromNow = Duration.between(generationInstant, now).abs();
+                        if (ageFromNow.toDays() > 365) {
+                            log.warn("Generation timestamp {} for listing {} is more than 1 year from current time - proceeding with write but this may indicate a data issue", 
+                                    generationInstant, listingId);
+                        }
+                        
+                    } catch (DateTimeException | ArithmeticException e) {
+                        log.error("Failed to parse generation timestamp {} for listing {} - defaulting to allow write", 
+                                generationTimestamp, listingId, e);
+                        conflictAllowedCounter.inc();
+                        return false;
+                    }
+                    
+                    Instant lastUpdatedInstant;
+                    try {
+                        lastUpdatedInstant = Instant.ofEpochMilli(lastUpdatedMillis);
+                    } catch (DateTimeException e) {
+                        log.error("Failed to parse database timestamp {} for listing {} - defaulting to allow write", 
+                                lastUpdatedMillis, listingId, e);
+                        conflictAllowedCounter.inc();
+                        return false;
+                    }
+                    
+                    // Apply clock skew tolerance: only skip if database timestamp is significantly newer
+                    Duration timeDifference = Duration.between(generationInstant, lastUpdatedInstant);
+                    boolean isSignificantlyNewer = timeDifference.compareTo(CLOCK_SKEW_TOLERANCE) > 0;
+                    
+                    if (isSignificantlyNewer) {
+                        log.info("Skipping write for listing {} - database last_updated {} is significantly newer than generation_timestamp {} (difference: {} seconds, tolerance: {} seconds)", 
+                                listingId, lastUpdatedInstant, generationInstant, 
+                                timeDifference.getSeconds(), CLOCK_SKEW_TOLERANCE.getSeconds());
+                        conflictSkippedCounter.inc();
+                        return true;
                     } else {
-                        // Database record exists but updated_at is null - allow write
-                        log.debug("Allowing write for listing {} - database updated_at is null", listingId);
+                        if (timeDifference.getSeconds() > 0) {
+                            log.debug("Allowing write for listing {} - database last_updated {} is newer than generation_timestamp {} but within clock skew tolerance (difference: {} seconds)", 
+                                    listingId, lastUpdatedInstant, generationInstant, timeDifference.getSeconds());
+                        } else {
+                            log.debug("Allowing write for listing {} - generation_timestamp {} is newer than or equal to database last_updated {}", 
+                                    listingId, generationInstant, lastUpdatedInstant);
+                        }
                         conflictAllowedCounter.inc();
                         return false;
                     }
@@ -170,13 +183,6 @@ public class ConflictResolutionUtil {
         }
     }
     
-    /**
-     * Validates that a ListingUpdate object is compatible with the timestamp protection system.
-     * Provides backward compatibility checks and validation for timestamp fields.
-     * 
-     * @param listingUpdate The ListingUpdate object to validate
-     * @return true if the object is valid and can be processed, false otherwise
-     */
     public static boolean isValidListingUpdate(ListingUpdate listingUpdate) {
         if (listingUpdate == null) {
             return false;

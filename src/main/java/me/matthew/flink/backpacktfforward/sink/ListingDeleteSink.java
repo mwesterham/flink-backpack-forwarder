@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.util.ConflictResolutionUtil;
+import me.matthew.flink.backpacktfforward.util.ListingUpdateConflictResolutionRequest;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
@@ -107,11 +108,8 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
         } else {
             // Only apply conflict resolution for backfill updates (non-null generation timestamp)
             try {
-                boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(
-                        lu.getPayload().getId(), 
-                        lu.getGenerationTimestamp(), 
-                        connection
-                );
+                ListingUpdateConflictResolutionRequest request = new ListingUpdateConflictResolutionRequest(lu);
+                boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(request, connection);
                 
                 if (!shouldSkip) {
                     batch.add(lu);
