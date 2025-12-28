@@ -100,15 +100,18 @@ public class ListingDeleteSink extends RichSinkFunction<ListingUpdate> {
             return;
         }
         
-        ListingUpdateConflictResolutionRequest request = new ListingUpdateConflictResolutionRequest(lu);
-        boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(request, connection);
-        
-        if (!shouldSkip) {
-            // Track real-time vs backfill writes separately for monitoring
-            if (lu.getGenerationTimestamp() == null) {
-                realTimeWritesCounter.inc();
-            }
+        // Track real-time vs backfill writes separately for monitoring
+        if (lu.getGenerationTimestamp() == null) {
+            realTimeWritesCounter.inc();
             batch.add(lu);
+        }
+        else {
+            ListingUpdateConflictResolutionRequest request = new ListingUpdateConflictResolutionRequest(lu);
+            boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(request, connection);
+            
+            if (!shouldSkip) {
+                batch.add(lu);
+            }
         }
 
         long now = System.currentTimeMillis();
