@@ -22,8 +22,6 @@ public final class Metrics {
     public static final String BACKFILL_REQUESTS_FAILED = "backfill_requests_failed";
     public static final String BACKFILL_API_CALLS_SUCCESS = "backfill_api_calls_success";
     public static final String BACKFILL_API_CALLS_FAILED = "backfill_api_calls_failed";
-    public static final String BACKFILL_STALE_LISTINGS_DETECTED = "backfill_stale_listings_detected";
-    public static final String BACKFILL_LISTINGS_UPDATED = "backfill_listings_updated";
 
     // Steam API metrics
     public static final String STEAM_API_CALLS_SUCCESS = "steam_api_calls_success";
@@ -37,9 +35,6 @@ public final class Metrics {
     public static final String DATABASE_QUERIES_SUCCESS = "database_queries_success";
     public static final String DATABASE_QUERIES_FAILED = "database_queries_failed";
 
-    // Conflict resolution metrics
-    public static final String CONFLICT_WRITES_SKIPPED = "conflict_writes_skipped";
-    public static final String CONFLICT_WRITES_ALLOWED = "conflict_writes_allowed";
     public static final String REALTIME_WRITES_PROCESSED = "realtime_writes_processed";
 
     // Performance tracking gauge metrics

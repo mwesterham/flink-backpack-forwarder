@@ -5,8 +5,6 @@ import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.metrics.SqlRetryMetrics;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
-import me.matthew.flink.backpacktfforward.util.ConflictResolutionUtil;
-import me.matthew.flink.backpacktfforward.util.ListingUpdateConflictResolutionRequest;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
@@ -21,8 +19,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.CONFLICT_WRITES_ALLOWED;
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.CONFLICT_WRITES_SKIPPED;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERTS;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.LISTING_UPSERT_RETRIES;
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.REALTIME_WRITES_PROCESSED;
@@ -78,9 +74,6 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
     private Connection connection;
     private PreparedStatement stmt;
     private transient Counter upsertCounter;
-    private transient ConflictResolutionUtil conflictResolutionUtil;
-    private transient Counter conflictSkippedCounter;
-    private transient Counter conflictAllowedCounter;
     private transient Counter realTimeWritesCounter;
 
     private final List<ListingUpdate> batch = new ArrayList<>();
@@ -111,15 +104,7 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
         stmt = connection.prepareStatement(UPSERT_SQL);
 
         upsertCounter = getRuntimeContext().getMetricGroup().counter(LISTING_UPSERTS);
-        conflictSkippedCounter = getRuntimeContext().getMetricGroup().counter(CONFLICT_WRITES_SKIPPED);
-        conflictAllowedCounter = getRuntimeContext().getMetricGroup().counter(CONFLICT_WRITES_ALLOWED);
         realTimeWritesCounter = getRuntimeContext().getMetricGroup().counter(REALTIME_WRITES_PROCESSED);
-        
-        // Initialize conflict resolution utility with metrics counters
-        conflictResolutionUtil = new ConflictResolutionUtil(
-                conflictSkippedCounter,
-                conflictAllowedCounter
-        );
         
         SqlRetryMetrics sqlRetryMetrics = new SqlRetryMetrics(
                 getRuntimeContext().getMetricGroup(),
@@ -132,23 +117,13 @@ public class ListingUpsertSink extends RichSinkFunction<ListingUpdate> {
 
     @Override
     public void invoke(ListingUpdate lu, Context context) throws Exception {
-        if (!ConflictResolutionUtil.isValidListingUpdate(lu)) {
-            log.warn("Received invalid ListingUpdate - skipping processing");
-            return;
-        }
-        
         // Track real-time vs backfill writes separately for monitoring
         if (lu.getGenerationTimestamp() == null) {
             realTimeWritesCounter.inc();
             batch.add(lu);
         }
-        else {
-            ListingUpdateConflictResolutionRequest request = new ListingUpdateConflictResolutionRequest(lu);
-            boolean shouldSkip = conflictResolutionUtil.shouldSkipWrite(request, connection);
-            
-            if (!shouldSkip) {
-                batch.add(lu);
-            }
+        else { // this is a backfill request
+            batch.add(lu);
         }
 
         long now = System.currentTimeMillis();
