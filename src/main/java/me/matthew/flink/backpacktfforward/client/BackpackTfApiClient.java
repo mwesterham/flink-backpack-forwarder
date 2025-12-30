@@ -6,7 +6,7 @@ import dev.failsafe.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.config.BackpackTfApiConfiguration;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
-import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
+import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import org.apache.flink.metrics.Counter;
 
 import java.io.IOException;
@@ -45,7 +45,7 @@ public class BackpackTfApiClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final RetryPolicy<BackpackTfApiResponse> retryPolicy;
-    private final RetryPolicy<BackpackTfListingDetail> getListingRetryPolicy;
+    private final RetryPolicy<ListingUpdate.Payload> getListingRetryPolicy;
     
     // Metrics for tracking API performance
     private final Counter backfillApiCallsSuccess;
@@ -132,8 +132,8 @@ public class BackpackTfApiClient {
      * 
      * @return RetryPolicy configured for getListing operations
      */
-    private RetryPolicy<BackpackTfListingDetail> createGetListingRetryPolicy() {
-        return RetryPolicy.<BackpackTfListingDetail>builder()
+    private RetryPolicy<ListingUpdate.Payload> createGetListingRetryPolicy() {
+        return RetryPolicy.<ListingUpdate.Payload>builder()
                 .handle(IOException.class)
                 .handle(HttpTimeoutException.class)
                 .handleIf(this::isRetryableHttpError)
@@ -326,12 +326,12 @@ public class BackpackTfApiClient {
      * Uses retry logic to handle transient failures and follows existing authentication patterns.
      * 
      * @param itemId The Steam item ID to retrieve listing details for
-     * @return BackpackTfListingDetail containing the complete listing data with actual listing ID
+     * @return ListingUpdate.Payload containing the complete listing data with actual listing ID
      * @throws IOException if the HTTP request fails after all retries
      * @throws InterruptedException if the request is interrupted
      * @throws URISyntaxException if the URL construction fails
      */
-    public BackpackTfListingDetail getListing(String itemId) 
+    public ListingUpdate.Payload getListing(String itemId) 
             throws IOException, InterruptedException, URISyntaxException {
         
         log.debug("Fetching listing detail for itemId={}", itemId);
@@ -344,12 +344,12 @@ public class BackpackTfApiClient {
      * Enforces getListing API rate limiting before making the call.
      * 
      * @param itemId The Steam item ID to retrieve listing details for
-     * @return BackpackTfListingDetail containing the complete listing data
+     * @return ListingUpdate.Payload containing the complete listing data
      * @throws IOException if the HTTP request fails or response cannot be parsed
      * @throws InterruptedException if the request is interrupted
      * @throws URISyntaxException if the URL construction fails
      */
-    private BackpackTfListingDetail performGetListingCall(String itemId) 
+    private ListingUpdate.Payload performGetListingCall(String itemId) 
             throws IOException, InterruptedException, URISyntaxException {
         
         // Enforce getListing API rate limiting before making the call (60/min = 1s delay)
@@ -397,8 +397,8 @@ public class BackpackTfApiClient {
         }
         
         try {
-            BackpackTfListingDetail listingDetail = objectMapper.readValue(
-                    response.body(), BackpackTfListingDetail.class);
+            ListingUpdate.Payload listingDetail = objectMapper.readValue(
+                    response.body(), ListingUpdate.Payload.class);
             
             log.debug("Successfully parsed BackpackTF getListing API response for item ID: {}", itemId);
             

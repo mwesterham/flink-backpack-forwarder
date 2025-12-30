@@ -1,7 +1,6 @@
 package me.matthew.flink.backpacktfforward.processor;
 
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
-import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequestType;
@@ -35,7 +34,7 @@ public class SingleIdBackfillHandler implements BackfillRequestHandler {
         DatabaseHelper.ExistingListing dbListing = databaseHelper.getSingleListingById(listingId);
 
         // Step 2: Call BackpackTF getListing API directly with the provided ID
-        BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
+        ListingUpdate.Payload listingDetail = apiClient.getListing(listingId);
 
         // Step 3: Generate single update or delete event based on listing existence
         if (listingDetail != null && listingDetail.getId() != null) {
@@ -45,7 +44,7 @@ public class SingleIdBackfillHandler implements BackfillRequestHandler {
             log.debug("Emitted listing-update event for buy listing ID: {} with generation_timestamp: {}",
                     listingId, generationTimestamp);
         } else if (dbListing != null) {
-            ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteEvent(
+            ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteUpdate(
                     listingId, dbListing.getSteamid(), generationTimestamp);
             out.collect(deleteEvent);
             log.debug("Emitted listing-delete event for buy listing ID: {} with generation_timestamp: {}",

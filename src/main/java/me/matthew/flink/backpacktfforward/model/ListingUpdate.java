@@ -101,6 +101,7 @@ public class ListingUpdate {
         public ItemPrice price;
         public Integer level;
         public List<Equipped> equipped;
+        @JsonProperty("strangeParts")
         public List<StrangePart> strangeParts;
         public List<Spell> spells;
         @JsonProperty("class")
@@ -211,13 +212,16 @@ public class ListingUpdate {
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class StrangePart {
+        @JsonProperty("score")
         public int score;
+        @JsonProperty("killEater")
         public KillEater killEater;
     }
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class KillEater {
+        @JsonProperty("id")
         public int id;
         public String name;
         public Item item;

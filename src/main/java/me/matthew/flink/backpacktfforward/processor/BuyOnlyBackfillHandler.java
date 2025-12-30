@@ -2,7 +2,7 @@ package me.matthew.flink.backpacktfforward.processor;
 
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
-import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
+import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.SourceOfTruthListing;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
@@ -105,7 +105,7 @@ public class BuyOnlyBackfillHandler implements BackfillRequestHandler {
         for (BackpackTfApiResponse.ApiListing snapshotBuyListing : snapshotBuyListings) {
             // For buy orders: construct listing ID directly without Steam API call
             String listingId = ListingIdGenerator.generateBuyListingId(440, snapshotBuyListing.getSteamid(), this.marketName);
-            BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
+            ListingUpdate.Payload listingDetail = apiClient.getListing(listingId);
             SourceOfTruthListing sotBuyListing = new SourceOfTruthListing(snapshotBuyListing, null, listingDetail);
             sourceOfTruthBuyListings.add(sotBuyListing);
         }
@@ -116,7 +116,7 @@ public class BuyOnlyBackfillHandler implements BackfillRequestHandler {
         // Step 5: Generate listing-update events for source of truth
         int updatesGenerated = 0;
         for (SourceOfTruthListing sotBuyListing : sourceOfTruthBuyListings) {
-            ListingUpdate updateEvent = ListingUpdateMapper.mapToListingUpdate(sotBuyListing, generationTimestamp);
+            ListingUpdate updateEvent = ListingUpdateMapper.mapFromSourceOfTruth(sotBuyListing, generationTimestamp);
             out.collect(updateEvent);
             updatesGenerated++;
             log.debug("Emitted listing-update event for buy listing ID: {} with generation_timestamp: {}",
@@ -162,7 +162,7 @@ public class BuyOnlyBackfillHandler implements BackfillRequestHandler {
         for (DatabaseHelper.ExistingListing dbListing : buyDbListings) {
             boolean buyListingMatchesWithSource = sourceOfTruthIds.contains(dbListing.getId());
             if (!buyListingMatchesWithSource) {
-                ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteEvent(
+                ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteUpdate(
                         dbListing.getId(), dbListing.getSteamid(), generationTimestamp);
                 out.collect(deleteEvent);
                 staleListingsCount++;

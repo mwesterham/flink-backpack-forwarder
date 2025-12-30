@@ -3,7 +3,6 @@ package me.matthew.flink.backpacktfforward.processor;
 import me.matthew.flink.backpacktfforward.client.BackpackTfApiClient;
 import me.matthew.flink.backpacktfforward.client.SteamApi;
 import me.matthew.flink.backpacktfforward.model.BackpackTfApiResponse;
-import me.matthew.flink.backpacktfforward.model.BackpackTfListingDetail;
 import me.matthew.flink.backpacktfforward.model.InventoryItem;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.SourceOfTruthListing;
@@ -14,8 +13,6 @@ import me.matthew.flink.backpacktfforward.util.DatabaseHelper;
 import me.matthew.flink.backpacktfforward.util.ListingIdGenerator;
 import me.matthew.flink.backpacktfforward.util.ListingUpdateMapper;
 import org.apache.flink.util.Collector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -131,7 +128,7 @@ public class SellOnlyBackfillHandler implements BackfillRequestHandler {
             for (InventoryItem matchingItem : matchingItems) {
                 String listingId = ListingIdGenerator.generateSellListingId(440, String.valueOf(matchingItem.getId()));
 
-                BackpackTfListingDetail listingDetail = apiClient.getListing(listingId);
+                ListingUpdate.Payload listingDetail = apiClient.getListing(listingId);
                 if(listingDetail != null) {
                     SourceOfTruthListing sotSellListing = new SourceOfTruthListing(snapshotSellListing, matchingItem,
                             listingDetail);
@@ -143,7 +140,7 @@ public class SellOnlyBackfillHandler implements BackfillRequestHandler {
 
         int updatesGenerated = 0;
         for (SourceOfTruthListing sotSellListing : sourceOfTruthSellListings) {
-            ListingUpdate sellUpdateEvent = ListingUpdateMapper.mapToListingUpdate(sotSellListing, generationTimestamp);
+            ListingUpdate sellUpdateEvent = ListingUpdateMapper.mapFromSourceOfTruth(sotSellListing, generationTimestamp);
             out.collect(sellUpdateEvent);
             updatesGenerated++;
         }
@@ -183,7 +180,7 @@ public class SellOnlyBackfillHandler implements BackfillRequestHandler {
             boolean shouldSkip = skipListingDeleteForSteamIdList.contains(sellDbListing.getSteamid());
             boolean matchesWithSourceOfTruth = sourceOfTruthSellListingIds.contains(sellDbListing.getId());
             if (!matchesWithSourceOfTruth && !shouldSkip) {
-                ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteEvent(
+                ListingUpdate deleteEvent = ListingUpdateMapper.createDeleteUpdate(
                         sellDbListing.getId(), sellDbListing.getSteamid(), generationTimestamp);
                 out.collect(deleteEvent);
                 staleListingsCount++;

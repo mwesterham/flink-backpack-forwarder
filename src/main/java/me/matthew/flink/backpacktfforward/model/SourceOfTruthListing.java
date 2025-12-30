@@ -31,7 +31,7 @@ public class SourceOfTruthListing {
     /**
      * Complete listing details from BackpackTF getListing API
      */
-    private BackpackTfListingDetail listingDetail;
+    private ListingUpdate.Payload listingDetail;
     
     /**
      * Gets the intent (buy/sell) from the API listing.
@@ -43,8 +43,8 @@ public class SourceOfTruthListing {
         if (apiListing != null && apiListing.getIntent() != null) {
             return apiListing.getIntent();
         }
-        if (listingDetail != null && listingDetail.getIntent() != null) {
-            return listingDetail.getIntent();
+        if (listingDetail != null && listingDetail.intent != null) {
+            return listingDetail.intent;
         }
         return null;
     }
@@ -56,8 +56,8 @@ public class SourceOfTruthListing {
      * @return the actual listing ID, or null if not available
      */
     public String getActualListingId() {
-        if (listingDetail != null && listingDetail.getId() != null) {
-            return listingDetail.getId();
+        if (listingDetail != null && listingDetail.id != null) {
+            return listingDetail.id;
         }
         return null;
     }
@@ -72,8 +72,8 @@ public class SourceOfTruthListing {
         if (apiListing != null && apiListing.getSteamid() != null) {
             return apiListing.getSteamid();
         }
-        if (listingDetail != null && listingDetail.getSteamid() != null) {
-            return listingDetail.getSteamid();
+        if (listingDetail != null && listingDetail.steamid != null) {
+            return listingDetail.steamid;
         }
         return null;
     }
@@ -140,7 +140,7 @@ public class SourceOfTruthListing {
      * @return true if listing detail is present, false otherwise
      */
     public boolean hasMinimumData() {
-        return listingDetail != null && listingDetail.getId() != null;
+        return listingDetail != null && listingDetail.id != null;
     }
     
     /**

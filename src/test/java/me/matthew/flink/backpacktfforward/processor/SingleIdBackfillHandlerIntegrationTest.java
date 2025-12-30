@@ -54,7 +54,7 @@ class SingleIdBackfillHandlerIntegrationTest {
         when(mockDatabaseHelper.getSingleListingById(listingId)).thenReturn(dbListing);
         
         // Mock successful API response
-        BackpackTfListingDetail listingDetail = createListingDetail(listingId, "76561199574661225", "sell");
+        ListingUpdate.Payload listingDetail = createListingDetail(listingId, "76561199574661225", "sell");
         when(mockApiClient.getListing(listingId)).thenReturn(listingDetail);
         
         // Act
@@ -89,7 +89,7 @@ class SingleIdBackfillHandlerIntegrationTest {
         when(mockDatabaseHelper.getSingleListingById(buyListingId)).thenReturn(dbListing);
         
         // Mock successful API response for buy listing
-        BackpackTfListingDetail listingDetail = createListingDetail(buyListingId, "76561199574661225", "buy");
+        ListingUpdate.Payload listingDetail = createListingDetail(buyListingId, "76561199574661225", "buy");
         when(mockApiClient.getListing(buyListingId)).thenReturn(listingDetail);
         
         // Act
@@ -175,8 +175,8 @@ class SingleIdBackfillHandlerIntegrationTest {
         when(mockDatabaseHelper.getSingleListingById(listingId)).thenReturn(dbListing);
         
         // Mock API response with null ID (should trigger delete)
-        BackpackTfListingDetail listingDetail = createListingDetail(listingId, "76561199574661225", "sell");
-        listingDetail.setId(null);
+        ListingUpdate.Payload listingDetail = createListingDetail(listingId, "76561199574661225", "sell");
+        listingDetail.id = null;
         when(mockApiClient.getListing(listingId)).thenReturn(listingDetail);
         
         // Act
@@ -208,7 +208,7 @@ class SingleIdBackfillHandlerIntegrationTest {
         );
         when(mockDatabaseHelper.getSingleListingById(sellListingId)).thenReturn(sellDbListing);
         
-        BackpackTfListingDetail sellListingDetail = createListingDetail(sellListingId, "76561199574661225", "sell");
+        ListingUpdate.Payload sellListingDetail = createListingDetail(sellListingId, "76561199574661225", "sell");
         when(mockApiClient.getListing(sellListingId)).thenReturn(sellListingDetail);
         
         // Process sell listing
@@ -224,7 +224,7 @@ class SingleIdBackfillHandlerIntegrationTest {
         );
         when(mockDatabaseHelper.getSingleListingById(buyListingId)).thenReturn(buyDbListing);
         
-        BackpackTfListingDetail buyListingDetail = createListingDetail(buyListingId, "76561199574661226", "buy");
+        ListingUpdate.Payload buyListingDetail = createListingDetail(buyListingId, "76561199574661226", "buy");
         when(mockApiClient.getListing(buyListingId)).thenReturn(buyListingDetail);
         
         // Process buy listing
@@ -288,7 +288,7 @@ class SingleIdBackfillHandlerIntegrationTest {
             );
             when(mockDatabaseHelper.getSingleListingById(listingId)).thenReturn(dbListing);
             
-            BackpackTfListingDetail listingDetail = createListingDetail(listingId, steamId, "sell");
+            ListingUpdate.Payload listingDetail = createListingDetail(listingId, steamId, "sell");
             when(mockApiClient.getListing(listingId)).thenReturn(listingDetail);
         }
         
@@ -375,7 +375,7 @@ class SingleIdBackfillHandlerIntegrationTest {
             );
             when(mockDatabaseHelper.getSingleListingById(listingId)).thenReturn(dbListing);
             
-            BackpackTfListingDetail listingDetail = createListingDetail(listingId, "76561199574661225", intent);
+            ListingUpdate.Payload listingDetail = createListingDetail(listingId, "76561199574661225", intent);
             when(mockApiClient.getListing(listingId)).thenReturn(listingDetail);
             
             TestCollector testCollector = new TestCollector();
@@ -404,74 +404,73 @@ class SingleIdBackfillHandlerIntegrationTest {
         return request;
     }
     
-    private BackpackTfListingDetail createListingDetail(String listingId, String steamId, String intent) {
-        BackpackTfListingDetail detail = new BackpackTfListingDetail();
-        detail.setId(listingId);
-        detail.setSteamid(steamId);
-        detail.setAppid(440);
-        detail.setIntent(intent);
-        detail.setCount(1);
-        detail.setStatus("active");
-        detail.setSource("user");
-        detail.setListedAt(System.currentTimeMillis() / 1000);
-        detail.setBumpedAt(System.currentTimeMillis() / 1000);
+    private ListingUpdate.Payload createListingDetail(String listingId, String steamId, String intent) {
+        ListingUpdate.Payload detail = new ListingUpdate.Payload();
+        detail.id = listingId;
+        detail.steamid = steamId;
+        detail.appid = 440;
+        detail.intent = intent;
+        detail.count = 1;
+        detail.status = "active";
+        detail.source = "user";
+        detail.listedAt = System.currentTimeMillis() / 1000;
+        detail.bumpedAt = System.currentTimeMillis() / 1000;
         
         // Create item detail
-        BackpackTfListingDetail.ApiItemDetail itemDetail = new BackpackTfListingDetail.ApiItemDetail();
-        itemDetail.setAppid(440);
-        itemDetail.setDefindex(190);
-        itemDetail.setMarketName("Strange Bat");
-        itemDetail.setName("Strange Bat");
-        itemDetail.setLevel(1);
-        itemDetail.setBaseName("Bat");
-        itemDetail.setImageUrl("https://steamcdn-a.akamaihd.net/apps/440/icons/c_bat.png");
-        itemDetail.setSummary("Level 1 Bat");
-        itemDetail.setTradable(true);
-        itemDetail.setCraftable(true);
+        ListingUpdate.Item itemDetail = new ListingUpdate.Item();
+        itemDetail.appid = 440;
+        itemDetail.defindex = 190;
+        itemDetail.marketName = "Strange Bat";
+        itemDetail.name = "Strange Bat";
+        itemDetail.level = 1;
+        itemDetail.baseName = "Bat";
+        itemDetail.imageUrl = "https://steamcdn-a.akamaihd.net/apps/440/icons/c_bat.png";
+        itemDetail.summary = "Level 1 Bat";
+        itemDetail.tradable = true;
+        itemDetail.craftable = true;
         
         // Set item ID based on listing type
         if ("sell".equals(intent) && listingId.startsWith("440_")) {
             String[] parts = listingId.split("_");
             if (parts.length >= 2) {
-                itemDetail.setId(parts[1]); // Extract item ID for sell listings
+                itemDetail.id = parts[1]; // Extract item ID for sell listings
             }
         }
         
-        BackpackTfListingDetail.ApiQuality quality = new BackpackTfListingDetail.ApiQuality();
-        quality.setId(11);
-        quality.setName("Strange");
-        quality.setColor("#CF6A32");
-        itemDetail.setQuality(quality);
+        ListingUpdate.Quality quality = new ListingUpdate.Quality();
+        quality.id = 11;
+        quality.name = "Strange";
+        quality.color = "#CF6A32";
+        itemDetail.quality = quality;
         
-        detail.setItem(itemDetail);
+        detail.item = itemDetail;
         
         // Create currencies
-        Map<String, Object> currencies = new HashMap<>();
+        ListingUpdate.Currencies currencies = new ListingUpdate.Currencies();
         if ("buy".equals(intent)) {
-            currencies.put("metal", 6.0);
+            currencies.metal = 6.0;
         } else {
-            currencies.put("metal", 7.0);
+            currencies.metal = 7.0;
         }
-        detail.setCurrencies(currencies);
+        detail.currencies = currencies;
         
         // Create value
-        BackpackTfListingDetail.ApiValue value = new BackpackTfListingDetail.ApiValue();
+        ListingUpdate.Value value = new ListingUpdate.Value();
         double price = "buy".equals(intent) ? 6.0 : 7.0;
-        value.setRaw(price);
-        value.setShortStr(price + " ref");
-        value.setLongStr(price + " ref");
-        value.setUsd(price * 0.33);
-        detail.setValue(value);
+        value.raw = price;
+        value.shortStr = price + " ref";
+        value.longStr = price + " ref";
+        detail.value = value;
         
         // Create user information
-        BackpackTfListingDetail.ApiUser user = new BackpackTfListingDetail.ApiUser();
-        user.setId(steamId);
-        user.setName("buy".equals(intent) ? "Test Buyer" : "Test Seller");
-        user.setAvatar("https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg");
-        user.setPremium(false);
-        user.setOnline("buy".equals(intent));
-        user.setBanned(false);
-        detail.setUser(user);
+        ListingUpdate.User user = new ListingUpdate.User();
+        user.id = steamId;
+        user.name = "buy".equals(intent) ? "Test Buyer" : "Test Seller";
+        user.avatar = "https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg";
+        user.premium = false;
+        user.online = "buy".equals(intent);
+        user.banned = false;
+        detail.user = user;
         
         return detail;
     }

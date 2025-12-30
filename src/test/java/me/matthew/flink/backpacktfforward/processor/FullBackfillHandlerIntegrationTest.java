@@ -73,8 +73,8 @@ class FullBackfillHandlerIntegrationTest {
         String buyListingId1 = me.matthew.flink.backpacktfforward.util.ListingIdGenerator.generateBuyListingId(440, "76561199574661225", "Strange Bat");
         String buyListingId2 = me.matthew.flink.backpacktfforward.util.ListingIdGenerator.generateBuyListingId(440, "76561199574661226", "Strange Bat");
         
-        BackpackTfListingDetail buyListing1 = createBuyListingDetail(buyListingId1, "76561199574661225");
-        BackpackTfListingDetail buyListing2 = createBuyListingDetail(buyListingId2, "76561199574661226");
+        ListingUpdate.Payload buyListing1 = createBuyListingDetail(buyListingId1, "76561199574661225");
+        ListingUpdate.Payload buyListing2 = createBuyListingDetail(buyListingId2, "76561199574661226");
         when(mockApiClient.getListing(buyListingId1)).thenReturn(buyListing1);
         when(mockApiClient.getListing(buyListingId2)).thenReturn(buyListing2);
         
@@ -91,8 +91,8 @@ class FullBackfillHandlerIntegrationTest {
         when(mockSteamApi.findMatchingItems(inventory2, 190, 11)).thenReturn(matchingItems2);
         
         // Mock sell listing details
-        BackpackTfListingDetail sellListing1 = createSellListingDetail("440_16525961480", "76561199574661227");
-        BackpackTfListingDetail sellListing2 = createSellListingDetail("440_16525961481", "76561199574661228");
+        ListingUpdate.Payload sellListing1 = createSellListingDetail("440_16525961480", "76561199574661227");
+        ListingUpdate.Payload sellListing2 = createSellListingDetail("440_16525961481", "76561199574661228");
         when(mockApiClient.getListing("440_16525961480")).thenReturn(sellListing1);
         when(mockApiClient.getListing("440_16525961481")).thenReturn(sellListing2);
         
@@ -160,7 +160,7 @@ class FullBackfillHandlerIntegrationTest {
         BackpackTfApiResponse buyOnlyResponse = createBuyOnlyApiResponse();
         when(mockApiClient.fetchSnapshot("Unusual Horseless Headless Horsemann's Headtaker", 440)).thenReturn(buyOnlyResponse);
         
-        BackpackTfListingDetail buyListing = createBuyListingDetail("440_76561199574661225_Unusual Horseless Headless Horsemann's Headtaker", "76561199574661225");
+        ListingUpdate.Payload buyListing = createBuyListingDetail("440_76561199574661225_Unusual Horseless Headless Horsemann's Headtaker", "76561199574661225");
         when(mockApiClient.getListing(anyString())).thenReturn(buyListing);
         
         // Act
@@ -200,7 +200,7 @@ class FullBackfillHandlerIntegrationTest {
         List<InventoryItem> matchingItems = Arrays.asList(createInventoryItem("16525961480", 190, 11));
         when(mockSteamApi.findMatchingItems(inventory, 190, 11)).thenReturn(matchingItems);
         
-        BackpackTfListingDetail sellListing = createSellListingDetail("440_16525961480", "76561199574661225");
+        ListingUpdate.Payload sellListing = createSellListingDetail("440_16525961480", "76561199574661225");
         when(mockApiClient.getListing("440_16525961480")).thenReturn(sellListing);
         
         // Act
@@ -298,7 +298,7 @@ class FullBackfillHandlerIntegrationTest {
         for (int i = 0; i < 20; i++) {
             String steamId = "7656119957466" + String.format("%04d", i);
             String listingId = me.matthew.flink.backpacktfforward.util.ListingIdGenerator.generateBuyListingId(440, steamId, "Strange Bat");
-            BackpackTfListingDetail buyListing = createBuyListingDetail(listingId, steamId);
+            ListingUpdate.Payload buyListing = createBuyListingDetail(listingId, steamId);
             when(mockApiClient.getListing(listingId)).thenReturn(buyListing);
         }
         
@@ -313,7 +313,7 @@ class FullBackfillHandlerIntegrationTest {
             List<InventoryItem> matchingItems = Arrays.asList(createInventoryItem(itemId, 190, 11));
             when(mockSteamApi.findMatchingItems(inventory, 190, 11)).thenReturn(matchingItems);
             
-            BackpackTfListingDetail sellListing = createSellListingDetail("440_" + itemId, steamId);
+            ListingUpdate.Payload sellListing = createSellListingDetail("440_" + itemId, steamId);
             when(mockApiClient.getListing("440_" + itemId)).thenReturn(sellListing);
         }
         
@@ -461,121 +461,119 @@ class FullBackfillHandlerIntegrationTest {
         return item;
     }
     
-    private BackpackTfListingDetail createBuyListingDetail(String listingId, String steamId) {
-        BackpackTfListingDetail detail = new BackpackTfListingDetail();
-        detail.setId(listingId);
-        detail.setSteamid(steamId);
-        detail.setAppid(440);
-        detail.setIntent("buy");
-        detail.setCount(1);
-        detail.setStatus("active");
-        detail.setSource("user");
-        detail.setListedAt(System.currentTimeMillis() / 1000);
-        detail.setBumpedAt(System.currentTimeMillis() / 1000);
+    private ListingUpdate.Payload createBuyListingDetail(String listingId, String steamId) {
+        ListingUpdate.Payload detail = new ListingUpdate.Payload();
+        detail.id = listingId;
+        detail.steamid = steamId;
+        detail.appid = 440;
+        detail.intent = "buy";
+        detail.count = 1;
+        detail.status = "active";
+        detail.source = "user";
+        detail.listedAt = System.currentTimeMillis() / 1000;
+        detail.bumpedAt = System.currentTimeMillis() / 1000;
         
         // Create item detail
-        BackpackTfListingDetail.ApiItemDetail itemDetail = new BackpackTfListingDetail.ApiItemDetail();
-        itemDetail.setAppid(440);
-        itemDetail.setDefindex(190);
-        itemDetail.setMarketName("Strange Bat");
-        itemDetail.setName("Strange Bat");
-        itemDetail.setLevel(1);
-        itemDetail.setBaseName("Bat");
-        itemDetail.setImageUrl("https://steamcdn-a.akamaihd.net/apps/440/icons/c_bat.png");
-        itemDetail.setSummary("Level 1 Bat");
-        itemDetail.setTradable(true);
-        itemDetail.setCraftable(true);
+        ListingUpdate.Item itemDetail = new ListingUpdate.Item();
+        itemDetail.appid = 440;
+        itemDetail.defindex = 190;
+        itemDetail.marketName = "Strange Bat";
+        itemDetail.name = "Strange Bat";
+        itemDetail.level = 1;
+        itemDetail.baseName = "Bat";
+        itemDetail.imageUrl = "https://steamcdn-a.akamaihd.net/apps/440/icons/c_bat.png";
+        itemDetail.summary = "Level 1 Bat";
+        itemDetail.tradable = true;
+        itemDetail.craftable = true;
         
-        BackpackTfListingDetail.ApiQuality quality = new BackpackTfListingDetail.ApiQuality();
-        quality.setId(11);
-        quality.setName("Strange");
-        quality.setColor("#CF6A32");
-        itemDetail.setQuality(quality);
+        ListingUpdate.Quality quality = new ListingUpdate.Quality();
+        quality.id = 11;
+        quality.name = "Strange";
+        quality.color = "#CF6A32";
+        itemDetail.quality = quality;
         
-        detail.setItem(itemDetail);
+        detail.item = itemDetail;
         
         // Create currencies for buy order
-        Map<String, Object> currencies = new HashMap<>();
-        currencies.put("metal", 6.0);
-        detail.setCurrencies(currencies);
+        ListingUpdate.Currencies currencies = new ListingUpdate.Currencies();
+        currencies.metal = 6.0;
+        detail.currencies = currencies;
         
         // Create value
-        BackpackTfListingDetail.ApiValue value = new BackpackTfListingDetail.ApiValue();
-        value.setRaw(6.0);
-        value.setShortStr("6 ref");
-        value.setLongStr("6 ref");
-        value.setUsd(2.00);
-        detail.setValue(value);
+        ListingUpdate.Value value = new ListingUpdate.Value();
+        value.raw = 6.0;
+        value.shortStr = "6 ref";
+        value.longStr = "6 ref";
+        detail.value = value;
         
         // Create user information
-        BackpackTfListingDetail.ApiUser user = new BackpackTfListingDetail.ApiUser();
-        user.setId(steamId);
-        user.setName("Test Buyer");
-        user.setAvatar("https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg");
-        user.setPremium(false);
-        user.setOnline(true);
-        user.setBanned(false);
-        detail.setUser(user);
+        ListingUpdate.User user = new ListingUpdate.User();
+        user.id = steamId;
+        user.name = "Test Buyer";
+        user.avatar = "https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg";
+        user.premium = false;
+        user.online = true;
+        user.banned = false;
+        detail.user = user;
         
         return detail;
     }
     
-    private BackpackTfListingDetail createSellListingDetail(String listingId, String steamId) {
-        BackpackTfListingDetail detail = new BackpackTfListingDetail();
-        detail.setId(listingId);
-        detail.setSteamid(steamId);
-        detail.setAppid(440);
-        detail.setIntent("sell");
-        detail.setCount(1);
-        detail.setStatus("active");
-        detail.setSource("user");
-        detail.setListedAt(System.currentTimeMillis() / 1000);
-        detail.setBumpedAt(System.currentTimeMillis() / 1000);
+    private ListingUpdate.Payload createSellListingDetail(String listingId, String steamId) {
+        ListingUpdate.Payload detail = new ListingUpdate.Payload();
+        detail.id = listingId;
+        detail.steamid = steamId;
+        detail.appid = 440;
+        detail.intent = "sell";
+        detail.count = 1;
+        detail.status = "active";
+        detail.source = "user";
+        detail.listedAt = System.currentTimeMillis() / 1000;
+        detail.bumpedAt = System.currentTimeMillis() / 1000;
         
         // Create item detail
-        BackpackTfListingDetail.ApiItemDetail itemDetail = new BackpackTfListingDetail.ApiItemDetail();
-        itemDetail.setAppid(440);
-        itemDetail.setDefindex(190);
-        itemDetail.setMarketName("Strange Bat");
-        itemDetail.setName("Strange Bat");
-        itemDetail.setLevel(1);
-        itemDetail.setBaseName("Bat");
-        itemDetail.setId(listingId.split("_")[1]); // Extract item ID from listing ID
-        itemDetail.setImageUrl("https://steamcdn-a.akamaihd.net/apps/440/icons/c_bat.png");
-        itemDetail.setSummary("Level 1 Bat");
-        itemDetail.setTradable(true);
-        itemDetail.setCraftable(true);
+        ListingUpdate.Item itemDetail = new ListingUpdate.Item();
+        itemDetail.appid = 440;
+        itemDetail.defindex = 190;
+        itemDetail.marketName = "Strange Bat";
+        itemDetail.name = "Strange Bat";
+        itemDetail.level = 1;
+        itemDetail.baseName = "Bat";
+        itemDetail.id = listingId.split("_")[1]; // Extract item ID from listing ID
+        itemDetail.imageUrl = "https://steamcdn-a.akamaihd.net/apps/440/icons/c_bat.png";
+        itemDetail.summary = "Level 1 Bat";
+        itemDetail.tradable = true;
+        itemDetail.craftable = true;
         
-        BackpackTfListingDetail.ApiQuality quality = new BackpackTfListingDetail.ApiQuality();
-        quality.setId(11);
-        quality.setName("Strange");
-        quality.setColor("#CF6A32");
-        itemDetail.setQuality(quality);
+        ListingUpdate.Quality quality = new ListingUpdate.Quality();
+        quality.id = 11;
+        quality.name = "Strange";
+        quality.color = "#CF6A32";
+        itemDetail.quality = quality;
         
-        detail.setItem(itemDetail);
+        detail.item = itemDetail;
         
         // Create currencies for sell listing
-        Map<String, Object> currencies = new HashMap<>();
-        currencies.put("metal", 7.0);
-        detail.setCurrencies(currencies);
+        ListingUpdate.Currencies currencies = new ListingUpdate.Currencies();
+        currencies.metal = 7.0;
+        detail.currencies = currencies;
         
         // Create value
-        BackpackTfListingDetail.ApiValue value = new BackpackTfListingDetail.ApiValue();
-        value.setRaw(7.0);
-        value.setShortStr("7 ref");
-        value.setLongStr("7 ref");
-        value.setUsd(2.33);
-        detail.setValue(value);
+        ListingUpdate.Value value = new ListingUpdate.Value();
+        value.raw = 7.0;
+        value.shortStr = "7 ref";
+        value.longStr = "7 ref";
+        detail.value = value;
         
         // Create user information
-        BackpackTfListingDetail.ApiUser user = new BackpackTfListingDetail.ApiUser();
-        user.setId(steamId);
-        user.setName("Test Seller");
-        user.setAvatar("https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg");
-        user.setPremium(false);
-        user.setOnline(false);
-        user.setBanned(false);
-        detail.setUser(user);
+        ListingUpdate.User user = new ListingUpdate.User();
+        user.id = steamId;
+        user.name = "Test Seller";
+        user.avatar = "https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg";
+        user.premium = false;
+        user.online = false;
+        user.banned = false;
+        detail.user = user;
         
         return detail;
     }
