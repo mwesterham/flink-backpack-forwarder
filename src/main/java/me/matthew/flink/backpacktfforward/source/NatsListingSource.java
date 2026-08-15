@@ -45,6 +45,14 @@ public class NatsListingSource {
 
         Properties connectionProperties = new Properties();
         connectionProperties.setProperty("io.nats.client.url", url);
+        // jnats defaults to 60 reconnect attempts at ~2s apart (~2 minutes)
+        // before permanently closing the connection. During the 2026-08-15
+        // NATS StatefulSet restart/leader-election incident, this source hit
+        // that ceiling, gave up for good, and sat silently dead for over an
+        // hour while Flink kept reporting the job RUNNING/STABLE — the same
+        // root cause already fixed in tf2-data-bridge's NatsPublisher. Retry
+        // indefinitely so a future NATS-side blip is self-healing.
+        connectionProperties.setProperty("io.nats.client.reconnect.max", "-1");
 
         JetStreamSubjectConfiguration subjectConfiguration = JetStreamSubjectConfiguration.builder()
                 .streamName(stream)
