@@ -10,12 +10,12 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.util.Collector;
 
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.KAFKA_MESSAGES_PARSED_FAILED;
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.KAFKA_MESSAGES_PARSED_SUCCESS;
-import static me.matthew.flink.backpacktfforward.metrics.Metrics.KAFKA_MESSAGES_CONSUMED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.BACKFILL_MESSAGES_PARSED_FAILED;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.BACKFILL_MESSAGES_PARSED_SUCCESS;
+import static me.matthew.flink.backpacktfforward.metrics.Metrics.BACKFILL_MESSAGES_CONSUMED;
 
 /**
- * Parses Kafka messages containing backfill request data and extracts BackfillRequest objects.
+ * Parses NATS messages containing backfill request data and extracts BackfillRequest objects.
  * Handles JSON deserialization with error handling and metrics collection following existing patterns.
  */
 @Slf4j
@@ -36,15 +36,15 @@ public class BackfillMessageParser extends RichFlatMapFunction<String, BackfillR
         // Initialize metrics following existing patterns
         this.successfulParses = getRuntimeContext()
                 .getMetricGroup()
-                .counter(KAFKA_MESSAGES_PARSED_SUCCESS);
-                
+                .counter(BACKFILL_MESSAGES_PARSED_SUCCESS);
+
         this.failedParses = getRuntimeContext()
                 .getMetricGroup()
-                .counter(KAFKA_MESSAGES_PARSED_FAILED);
-                
+                .counter(BACKFILL_MESSAGES_PARSED_FAILED);
+
         this.messagesConsumed = getRuntimeContext()
                 .getMetricGroup()
-                .counter(KAFKA_MESSAGES_CONSUMED);
+                .counter(BACKFILL_MESSAGES_CONSUMED);
     }
     
     @Override

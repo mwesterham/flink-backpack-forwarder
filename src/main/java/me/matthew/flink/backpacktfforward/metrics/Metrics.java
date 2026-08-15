@@ -5,10 +5,10 @@ public final class Metrics {
     // General application metrics
     public static final String INCOMING_EVENTS = "incoming_events";
 
-    // Kafka source metrics
-    public static final String KAFKA_MESSAGES_CONSUMED = "kafka_messages_consumed";
-    public static final String KAFKA_MESSAGES_PARSED_SUCCESS = "kafka_messages_parsed_success";
-    public static final String KAFKA_MESSAGES_PARSED_FAILED = "kafka_messages_parsed_failed";
+    // Backfill NATS source message parsing metrics
+    public static final String BACKFILL_MESSAGES_CONSUMED = "backfill_messages_consumed";
+    public static final String BACKFILL_MESSAGES_PARSED_SUCCESS = "backfill_messages_parsed_success";
+    public static final String BACKFILL_MESSAGES_PARSED_FAILED = "backfill_messages_parsed_failed";
 
     // NATS JetStream source metrics (Phase 3 of the Kafka -> NATS migration)
     public static final String NATS_MESSAGES_CONSUMED = "nats_messages_consumed";
