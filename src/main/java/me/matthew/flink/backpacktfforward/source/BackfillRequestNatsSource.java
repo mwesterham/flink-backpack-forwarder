@@ -8,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.config.NatsSourceConfiguration;
 
 import java.time.Duration;
-import java.time.ZonedDateTime;
 import java.util.Properties;
 
 /**
@@ -55,14 +54,15 @@ public class BackfillRequestNatsSource {
                 .durableName(consumerName)
                 .ackBehavior(AckBehavior.ExplicitButDoNotAck)
                 .ackWait(Duration.ofMillis(ackWaitMillis))
-                // Only takes effect if this durable doesn't already exist —
-                // JetStream ignores startTime/deliverPolicy when binding to
-                // an existing durable by name (see flink-backfill-processor
-                // in nats-streams.yaml, created back in Phase 1: this source
-                // will inherit whatever backlog it accumulated while unbound
-                // and needs a one-time consumer reset on first deploy, same
-                // as pricer-listings did in Phase 4).
-                .startTime(ZonedDateTime.now())
+                // Deliberately no .startTime()/deliverPolicy here: this binds
+                // to flink-backfill-processor, an EXISTING durable created
+                // back in Phase 1 (nats-streams.yaml, deliverPolicy: new) —
+                // JetStream rejects changing an existing consumer's deliver
+                // policy ("deliver policy can not be updated" [10012]),
+                // which is exactly what setting startTime here triggered.
+                // This source inherits whatever backlog flink-backfill-processor
+                // accumulated while unbound and needs a one-time consumer
+                // reset on first deploy, same as pricer-listings in Phase 4.
                 .build();
 
         JetStreamSource<String> source = new JetStreamSourceBuilder<String>()
