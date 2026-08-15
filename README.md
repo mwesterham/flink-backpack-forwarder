@@ -149,13 +149,13 @@ docker push mwesterham/tf2-ingest-flink-job:latest
 
 The Kubernetes deployments use `spec.job.entryClass` to select which job to run from the shared JAR.
 
-## Checkpointing and Fault Tolerance
+## Fault Tolerance
 
-Both jobs checkpoint using the filesystem state backend. Checkpoint data is written to `state.checkpoints.dir` (configured in the k8s deployments as `/opt/flink/ha/checkpoints` on their respective HA PVCs).
+`execution.checkpointing.interval` is not set in either k8s deployment and `enableCheckpointing()` is never called in code, so despite `state.checkpoints.dir`/`execution.checkpointing.timeout` being configured, Flink checkpointing is not actually running — those settings are currently inert. This works out fine in practice because both jobs are stateless streaming ETL (no windows, no keyed aggregations), so there's no meaningful Flink operator state to lose on restart anyway.
 
-On restart after a failure, Flink restores from the last successful checkpoint. Without a valid checkpoint (first cold start), the main job falls back to consuming from `KAFKA_START_TIMESTAMP` or `KAFKA_START_TIMESTAMP_MINUTES` ago. The backfill job resumes from its last committed Kafka offset.
+What actually provides resilience: the Kafka consumer's own `enable.auto.commit=true` (independent of Flink), and, on the main job's true cold start with no prior committed offset, falling back to `KAFKA_START_TIMESTAMP` or `KAFKA_START_TIMESTAMP_MINUTES` ago. WebSocketForwarderNatsJob's NATS source follows the same shape deliberately — acking per message via `AckingUtf8StringSourceConverter`, decoupled from Flink state, rather than `AckBehavior.AckAll`'s checkpoint-gated acking, which would never fire here.
 
-Both k8s deployments use `upgradeMode: last-state`, so operator-managed restarts also restore from the last checkpoint.
+`upgradeMode: last-state` on both k8s deployments restores the operator-managed job graph across restarts, but — per the above — there's no real checkpoint underneath it for these jobs; it's not doing more than a stateless restart would.
 
 ## Monitoring
 
