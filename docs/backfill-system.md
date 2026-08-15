@@ -204,7 +204,7 @@ The `SELL_ONLY` handler supports inventory size filtering to skip users with lar
 ## Backfill Process Flow
 
 **General Flow (All Handlers)**:
-1. **Request Processing**: Consumes backfill requests from dedicated Kafka topic
+1. **Request Processing**: Consumes backfill requests from a dedicated NATS subject
 2. **Handler Selection**: Routes to appropriate handler based on request_type
 3. **Validation**: Validates request parameters for the selected handler
 4. **Database Query**: Retrieves existing listings (scope depends on handler)
@@ -222,12 +222,12 @@ The `SELL_ONLY` handler supports inventory size filtering to skip users with lar
 
 ## Testing Backfill Handlers
 
-Once the application is running with backfill enabled, you can test different backfill types by sending messages to the backfill Kafka topic:
+Once the application is running with backfill enabled, you can test different backfill types by publishing messages to the backfill NATS subject. The `nats` CLI ships in the `nats-box` helper pod deployed alongside the cluster (`natsBox.enabled: true` in the Helm chart) — see `k8s-mwesterham-homelab/README.md` for how to exec into it.
 
 ### Test Full Backfill (Strange Bat)
 
 ```bash
-echo '{
+nats pub bptf.backfill.request '{
   "data": {
     "request_type": "FULL",
     "item_defindex": 190,
@@ -235,13 +235,13 @@ echo '{
   },
   "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
   "messageId": "test-full-backfill-'$(date +%s)'"
-}' | kafka-console-producer --bootstrap-server localhost:9092 --topic backpack-tf-backfill-requests
+}'
 ```
 
 ### Test Buy-Only Backfill (Unusual Horseless Headless Horsemann's Headtaker)
 
 ```bash
-echo '{
+nats pub bptf.backfill.request '{
   "data": {
     "request_type": "BUY_ONLY",
     "item_defindex": 266,
@@ -249,13 +249,13 @@ echo '{
   },
   "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
   "messageId": "test-buy-only-'$(date +%s)'"
-}' | kafka-console-producer --bootstrap-server localhost:9092 --topic backpack-tf-backfill-requests
+}'
 ```
 
 ### Test Sell-Only Backfill with Inventory Filtering
 
 ```bash
-echo '{
+nats pub bptf.backfill.request '{
   "data": {
     "request_type": "SELL_ONLY",
     "item_defindex": 190,
@@ -264,20 +264,20 @@ echo '{
   },
   "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
   "messageId": "test-sell-only-filtered-'$(date +%s)'"
-}' | kafka-console-producer --bootstrap-server localhost:9092 --topic backpack-tf-backfill-requests
+}'
 ```
 
 ### Test Single ID Backfill
 
 ```bash
-echo '{
+nats pub bptf.backfill.request '{
   "data": {
     "request_type": "SINGLE_ID",
     "listing_id": "440_16525961480"
   },
   "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
   "messageId": "test-single-id-'$(date +%s)'"
-}' | kafka-console-producer --bootstrap-server localhost:9092 --topic backpack-tf-backfill-requests
+}'
 ```
 
 ### Monitor Backfill Processing

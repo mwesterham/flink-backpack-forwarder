@@ -2,45 +2,36 @@
 
 ## Environment Variables
 
-### Core Application Configuration
+### Core Application Configuration (WebSocketForwarderNatsJob)
 
 **Required:**
-- `KAFKA_BROKERS`: Comma-separated list of Kafka broker addresses (e.g., "localhost:9092" or "broker1:9092,broker2:9092")
-- `KAFKA_TOPIC`: Name of the Kafka topic to consume from (e.g., "backpack-tf-relay-egress-queue-topic")
-- `KAFKA_CONSUMER_GROUP`: Consumer group ID for offset management (e.g., "flink-backpack-tf-consumer")
+- `NATS_URL`: Comma-separated list of NATS server addresses (e.g., "localhost:4222" or "nats-0:4222,nats-1:4222")
+- `NATS_STREAM`: JetStream stream name to consume from (e.g., "LISTINGS")
+- `NATS_SUBJECT`: Subject to consume (e.g., "bptf.listing.update")
+- `NATS_CONSUMER_NAME`: Durable consumer name this job owns and creates itself — must not be a pre-existing consumer created by something else (e.g. a `nack` CRD), since the connector always issues a create-or-update call and JetStream rejects changing `deliverPolicy` on an already-existing consumer. See `NatsListingSource` javadoc.
 - `DB_URL`: Database connection URL (e.g., "jdbc:postgresql://localhost:5432/testdb")
 - `DB_USERNAME`: Database username
 - `DB_PASSWORD`: Database password
 
-### Optional Kafka Consumer Properties
-
-Additional Kafka consumer properties can be set using environment variables with the `KAFKA_CONSUMER_` prefix:
-
-- `KAFKA_CONSUMER_AUTO_OFFSET_RESET`: What to do when there is no initial offset (earliest/latest/none)
-- `KAFKA_CONSUMER_ENABLE_AUTO_COMMIT`: Whether to enable auto-commit of offsets (true/false)
-- `KAFKA_CONSUMER_SESSION_TIMEOUT_MS`: Session timeout in milliseconds
-- `KAFKA_CONSUMER_HEARTBEAT_INTERVAL_MS`: Heartbeat interval in milliseconds
+**Optional:**
+- `NATS_ACK_WAIT_MS`: How long before an unacked message is redelivered, in milliseconds (default: `300000`, 5 minutes)
 
 ### Timestamp-Based Consumer Start
 
-- `KAFKA_START_TIMESTAMP`: Unix timestamp in milliseconds to start consuming from (optional)
-  - If not set: Consumer starts from latest messages (default behavior)
-  - If set: Consumer starts from first message at or after the specified timestamp
-  - If timestamp is before earliest available message: Consumer starts from beginning of topic
-  - Example values:
-    - `0`: Start from beginning of topic (equivalent to earliest)
-    - `1703936200000`: Start from December 20, 2024 10:30:00 UTC
-    - `echo $(date -d '1 hour ago' +%s)000`: Start from 1 hour ago (bash)
+The NATS source approximates the old Kafka consumer's cold-start "latest" behavior automatically: on a **true** cold start (a fresh durable consumer with no delivery history — see `NATS_CONSUMER_NAME` above), it starts from "now" rather than replaying the stream's whole retention window. There's no environment variable for this; it's set in code via `.startTime(ZonedDateTime.now())` in `NatsListingSource`/`BackfillRequestNatsSource`, since it only takes effect on a genuinely fresh consumer anyway.
 
-### Backfill Configuration
+### Backfill Configuration (BackfillJob)
 
 **Required for Backfill (all must be set to enable backfill):**
-- `BACKFILL_KAFKA_TOPIC`: Kafka topic for backfill requests (e.g., "backpack-tf-backfill-requests")
-- `BACKFILL_KAFKA_CONSUMER_GROUP`: Consumer group for backfill requests (e.g., "flink-backfill-consumer")
+- `NATS_URL`: Comma-separated list of NATS server addresses
+- `NATS_STREAM`: JetStream stream name for backfill requests (e.g., "BACKFILL")
+- `NATS_SUBJECT`: Subject to consume (e.g., "bptf.backfill.request")
+- `NATS_CONSUMER_NAME`: Durable consumer name this job owns and creates itself (same constraint as above)
 - `BACKPACK_TF_API_TOKEN`: API token for backpack.tf snapshot API (obtain from https://backpack.tf/developer)
 - `STEAM_API_KEY`: Steam Web API key for inventory scanning (obtain from https://steamcommunity.com/dev/apikey)
 
-**Optional Backfill Configuration:**
+**Optional:**
+- `NATS_ACK_WAIT_MS`: How long before an unacked message is redelivered (default: `300000`, 5 minutes). BackfillJob needs this well above its own 30-minute per-item async API-call timeout so a slow backpack.tf/Steam call doesn't trigger a mid-flight redelivery — the k8s deployment sets it to `2100000` (35 minutes).
 - `BACKPACK_TF_API_TIMEOUT_SECONDS`: Timeout for BackpackTF API calls in seconds (default: 30)
 - `BACKPACK_TF_SNAPSHOT_RATE_LIMIT_SECONDS`: Delay between snapshot API calls in seconds (default: 10)
 - `BACKPACK_TF_GET_LISTING_RATE_LIMIT_SECONDS`: Delay between getListing API calls in seconds (default: 1)
@@ -49,37 +40,31 @@ Additional Kafka consumer properties can be set using environment variables with
 
 ## Example Configurations
 
-### Basic Configuration (No Backfill)
+### Listings Job (WebSocketForwarderNatsJob)
 
 ```bash
-export KAFKA_BROKERS="localhost:9092"
-export KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic"
-export KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer"
+export NATS_URL="localhost:4222"
+export NATS_STREAM="LISTINGS"
+export NATS_SUBJECT="bptf.listing.update"
+export NATS_CONSUMER_NAME="flink-listings-nats-source"
 export DB_URL="jdbc:postgresql://localhost:5432/testdb"
 export DB_USERNAME="testuser"
 export DB_PASSWORD="testpass"
-
-# Optional consumer properties
-export KAFKA_CONSUMER_AUTO_OFFSET_RESET="earliest"
-export KAFKA_CONSUMER_ENABLE_AUTO_COMMIT="false"
 ```
 
-### Full Configuration with Backfill
+### Backfill Job (BackfillJob)
 
 ```bash
-# Core application
-export KAFKA_BROKERS="localhost:9092"
-export KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic"
-export KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer"
+export NATS_URL="localhost:4222"
+export NATS_STREAM="BACKFILL"
+export NATS_SUBJECT="bptf.backfill.request"
+export NATS_CONSUMER_NAME="flink-backfill-nats-source"
+export NATS_ACK_WAIT_MS="2100000"
+export BACKPACK_TF_API_TOKEN="your-backpack-tf-api-token-here"
+export STEAM_API_KEY="your-steam-api-key-here"
 export DB_URL="jdbc:postgresql://localhost:5432/testdb"
 export DB_USERNAME="testuser"
 export DB_PASSWORD="testpass"
-
-# Backfill functionality
-export BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests"
-export BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-consumer"
-export BACKPACK_TF_API_TOKEN="your-backpack-tf-api-token-here"
-export STEAM_API_KEY="your-steam-api-key-here"
 
 # Optional backfill tuning
 export BACKPACK_TF_API_TIMEOUT_SECONDS="30"
@@ -87,16 +72,13 @@ export BACKPACK_TF_SNAPSHOT_RATE_LIMIT_SECONDS="10"
 export BACKPACK_TF_GET_LISTING_RATE_LIMIT_SECONDS="1"
 export STEAM_API_TIMEOUT_SECONDS="30"
 export STEAM_API_RATE_LIMIT_SECONDS="10"
-
-# Timestamp-based start (optional)
-export KAFKA_START_TIMESTAMP="0"  # Start from beginning
 ```
 
-## Kafka Message Formats
+## NATS Message Formats
 
-### Main Topic Message Format
+### Listings Subject Message Format
 
-The application expects Kafka messages with the following JSON structure:
+The application expects NATS messages with the following JSON structure:
 
 ```json
 {
@@ -109,9 +91,9 @@ The application expects Kafka messages with the following JSON structure:
 
 The `data` field contains the original WebSocket payload that would have been received directly from the BackpackTF WebSocket API.
 
-### Backfill Topic Message Format
+### Backfill Subject Message Format
 
-Backfill requests should be sent to the backfill Kafka topic with this JSON structure:
+Backfill requests should be published to the backfill NATS subject with this JSON structure:
 
 ```json
 {
@@ -208,30 +190,6 @@ FROM pg_trigger
 WHERE tgrelid = 'listings'::regclass AND NOT tgisinternal;
 ```
 
-## Migration from WebSocket to Kafka
+## NATS JetStream Setup
 
-This application has been migrated from direct WebSocket consumption to Kafka-based message consumption. The migration provides:
-
-- **Improved Reliability**: Kafka provides message persistence and delivery guarantees
-- **Better Scalability**: Multiple consumer instances can process messages in parallel
-- **Operational Benefits**: Kafka's monitoring, offset management, and consumer group coordination
-- **Decoupling**: Separation between WebSocket connection management and message processing
-
-### Migration Steps
-
-1. **Deploy Kafka Infrastructure**: Set up Kafka cluster and create the required topic
-2. **Deploy WebSocket Bridge**: Deploy a service that consumes from WebSocket and produces to Kafka
-3. **Update Application Configuration**: Change environment variables from WebSocket URL to Kafka configuration
-4. **Deploy Updated Application**: Deploy this Kafka-enabled version of the Flink application
-5. **Monitor and Validate**: Ensure messages flow correctly and all metrics are healthy
-
-### Rollback Procedures
-
-If rollback is needed:
-
-1. **Preserve WebSocket Bridge**: Keep the WebSocket-to-Kafka bridge running to maintain message flow
-2. **Revert Configuration**: Change environment variables back to WebSocket configuration
-3. **Deploy Previous Version**: Deploy the WebSocket-based version of the application
-4. **Validate Functionality**: Ensure direct WebSocket consumption is working correctly
-
-Note: The WebSocket bridge can continue running during rollback to maintain Kafka message history.
+Both jobs consume from streams/subjects managed via the `nack` (NATS Controllers for Kubernetes) JetStream operator — see `nats-streams.yaml` in the `k8s-mwesterham-homelab` repo for the declarative `Stream` definitions (`LISTINGS`, `BACKFILL`). Each job's own durable consumer (`NATS_CONSUMER_NAME` above) is created by the connector itself on first startup, not pre-provisioned via `nack` — see the `Core Application Configuration` note above for why.
