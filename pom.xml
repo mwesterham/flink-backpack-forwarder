@@ -96,11 +96,22 @@
             <version>3.3.2</version>
         </dependency>
 
-        <!-- Kafka connector for Flink -->
+        <!-- NATS JetStream connector for Flink (Phase 3/5 of the Kafka -> NATS
+             migration) - officially supported by Synadia, released on Maven Central -->
         <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-kafka</artifactId>
-            <version>3.3.0-1.20</version>
+            <groupId>io.synadia</groupId>
+            <artifactId>flink-connector-nats</artifactId>
+            <version>3.0.4</version>
+        </dependency>
+
+        <!-- flink-connector-nats declares this as scope=runtime, but our own
+             code needs io.nats.client.Message (compile scope) to ack messages
+             in AckingUtf8StringSourceConverter. Version matches what
+             flink-connector-nats:3.0.4 itself depends on. -->
+        <dependency>
+            <groupId>io.nats</groupId>
+            <artifactId>jnats</artifactId>
+            <version>2.25.2</version>
         </dependency>
 
         <!-- Test dependencies -->
@@ -145,9 +156,24 @@
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>me.matthew.flink.backpacktfforward.WebSocketForwarderJob</mainClass>
+                                    <mainClass>me.matthew.flink.backpacktfforward.WebSocketForwarderNatsJob</mainClass>
                                 </transformer>
                             </transformers>
+                            <filters>
+                                <!-- One of the NATS dependencies (added for Phase 3) ships a signed
+                                     jar. Shading merges its class content without updating the
+                                     signature, so the JVM refuses to load ANY class from the fat jar
+                                     with "Invalid signature file digest for Manifest main attributes"
+                                     unless the signature files themselves are excluded. -->
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>

@@ -5,11 +5,11 @@ import me.matthew.flink.backpacktfforward.model.ListingUpdate;
 import me.matthew.flink.backpacktfforward.model.backfill.BackfillRequest;
 import me.matthew.flink.backpacktfforward.parser.BackfillMessageParser;
 import me.matthew.flink.backpacktfforward.processor.BackfillProcessor;
+import io.synadia.flink.source.JetStreamSource;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
 import me.matthew.flink.backpacktfforward.sink.ListingUpsertSink;
-import me.matthew.flink.backpacktfforward.source.BackfillRequestSource;
+import me.matthew.flink.backpacktfforward.source.BackfillRequestNatsSource;
 import me.matthew.flink.backpacktfforward.source.BackfillSourceWithMetrics;
-import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.streaming.api.datastream.AsyncDataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -35,11 +35,11 @@ public class BackfillJob {
         if (dbUrl == null || dbUser == null || dbPass == null)
             throw new IllegalArgumentException("Database env vars missing");
 
-        KafkaSource<String> backfillKafkaSource = BackfillRequestSource.createKafkaSource();
+        JetStreamSource<String> backfillNatsSource = BackfillRequestNatsSource.createSource();
 
-        DataStreamSource<String> backfillSource = env.fromSource(backfillKafkaSource,
+        DataStreamSource<String> backfillSource = env.fromSource(backfillNatsSource,
                 org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(),
-                "BackpackTFBackfillKafkaSource");
+                "BackpackTFBackfillNatsSource");
 
         var backfillRequests = backfillSource
                 .flatMap(new BackfillMessageParser())

@@ -82,41 +82,39 @@ docker push mwesterham/tf2-ingest-flink-job:latest
 start-cluster.sh
 ```
 
-**Run Application (Basic):**
+**Run Listings Job:**
 ```bash
 mvn clean package && \
-KAFKA_BROKERS="localhost:9092" \
-KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
-KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
+NATS_URL="localhost:4222" \
+NATS_STREAM="LISTINGS" \
+NATS_SUBJECT="bptf.listing.update" \
+NATS_CONSUMER_NAME="flink-listings-nats-source" \
 DB_URL="jdbc:postgresql://localhost:5432/testdb" \
 DB_USERNAME="testuser" \
 DB_PASSWORD="testpass" \
-flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+flink run -d -c me.matthew.flink.backpacktfforward.WebSocketForwarderNatsJob target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
-**Run Application (With Backfill):**
+**Run Backfill Job:**
 ```bash
 mvn clean package && \
-KAFKA_BROKERS="localhost:9092" \
-KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic" \
-KAFKA_CONSUMER_GROUP="flink-backpack-tf-test-consumer" \
-BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests" \
-BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-test-consumer" \
+NATS_URL="localhost:4222" \
+NATS_STREAM="BACKFILL" \
+NATS_SUBJECT="bptf.backfill.request" \
+NATS_CONSUMER_NAME="flink-backfill-nats-source" \
+NATS_ACK_WAIT_MS="2100000" \
 BACKPACK_TF_API_TOKEN="your-api-token" \
 STEAM_API_KEY="your-steam-key" \
 DB_URL="jdbc:postgresql://localhost:5432/testdb" \
 DB_USERNAME="testuser" \
 DB_PASSWORD="testpass" \
-flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+flink run -d -c me.matthew.flink.backpacktfforward.BackfillJob target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
-**Start from Specific Timestamp:**
-```bash
-# Add KAFKA_START_TIMESTAMP to any of the above commands
-KAFKA_START_TIMESTAMP="0" \  # Start from beginning
-# or
-KAFKA_START_TIMESTAMP="$(date -d '1 hour ago' +%s)000" \  # Start from 1 hour ago
-```
+Both jobs' NATS sources approximate the old Kafka consumer's cold-start
+"latest" behavior automatically on a genuinely fresh `NATS_CONSUMER_NAME` —
+there's no separate start-timestamp variable to set (see
+`setup-configuration.md`).
 
 ### Job Management
 
@@ -267,7 +265,7 @@ curl http://localhost:9250/metrics | grep backfill_full_requests
 - `util/`: Utility classes (database helpers, mappers, etc.)
 - `config/`: Configuration classes
 - `sink/`: Database sink implementations
-- `source/`: Kafka source implementations
+- `source/`: NATS JetStream source implementations
 
 ### Adding New Backfill Handlers
 
@@ -342,17 +340,20 @@ docker build -t flink-backpack-tf-forwarder:latest .
 
 **Environment Variables for Production:**
 ```bash
-# Core configuration
-KAFKA_BROKERS=prod-kafka:9092
-KAFKA_TOPIC=backpack-tf-relay-egress-queue-topic
-KAFKA_CONSUMER_GROUP=flink-backpack-tf-prod-consumer
+# Listings job
+NATS_URL=nats.backpack-tf-relay.svc.cluster.local:4222
+NATS_STREAM=LISTINGS
+NATS_SUBJECT=bptf.listing.update
+NATS_CONSUMER_NAME=flink-listings-nats-source
 DB_URL=jdbc:postgresql://prod-db:5432/listings
 DB_USERNAME=prod_user
 DB_PASSWORD=secure_password
 
-# Backfill configuration
-BACKFILL_KAFKA_TOPIC=backpack-tf-backfill-requests
-BACKFILL_KAFKA_CONSUMER_GROUP=flink-backfill-prod-consumer
+# Backfill job
+NATS_STREAM=BACKFILL
+NATS_SUBJECT=bptf.backfill.request
+NATS_CONSUMER_NAME=flink-backfill-nats-source
+NATS_ACK_WAIT_MS=2100000
 BACKPACK_TF_API_TOKEN=production_api_token
 STEAM_API_KEY=production_steam_key
 
@@ -383,8 +384,8 @@ spec:
       - name: flink-job
         image: flink-backpack-tf-forwarder:latest
         env:
-        - name: KAFKA_BROKERS
-          value: "kafka-service:9092"
+        - name: NATS_URL
+          value: "nats.backpack-tf-relay.svc.cluster.local:4222"
         # Add other environment variables
         resources:
           requests:

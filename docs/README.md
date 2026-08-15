@@ -4,7 +4,7 @@ This directory contains detailed documentation for the Flink BackpackTF Forwarde
 
 ## Documentation Structure
 
-- **[Setup and Configuration](setup-configuration.md)** - Environment setup, Kafka configuration, and deployment
+- **[Setup and Configuration](setup-configuration.md)** - Environment setup, NATS configuration, and deployment
 - **[Backfill System](backfill-system.md)** - Comprehensive guide to the backfill handlers and usage
 - **[API Integration](api-integration.md)** - BackpackTF and Steam API configuration and rate limiting
 - **[Monitoring and Metrics](monitoring-metrics.md)** - Available metrics, monitoring commands, and troubleshooting

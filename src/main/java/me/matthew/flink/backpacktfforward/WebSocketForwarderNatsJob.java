@@ -1,27 +1,44 @@
 package me.matthew.flink.backpacktfforward;
 
+import io.synadia.flink.source.JetStreamSource;
 import lombok.extern.slf4j.Slf4j;
 import me.matthew.flink.backpacktfforward.model.ListingUpdate;
-import me.matthew.flink.backpacktfforward.parser.KafkaMessageParser;
+import me.matthew.flink.backpacktfforward.parser.NatsMessageParser;
 import me.matthew.flink.backpacktfforward.sink.ListingDeleteSink;
 import me.matthew.flink.backpacktfforward.sink.ListingUpsertSink;
-import me.matthew.flink.backpacktfforward.source.KafkaMessageSource;
-import me.matthew.flink.backpacktfforward.source.KafkaSourceWithMetrics;
+import me.matthew.flink.backpacktfforward.source.NatsListingSource;
+import me.matthew.flink.backpacktfforward.source.NatsSourceWithMetrics;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.kafka.common.KafkaException;
 
 import static me.matthew.flink.backpacktfforward.metrics.Metrics.INCOMING_EVENTS;
 
+/**
+ * Phase 3 of the Kafka -> NATS migration: the same WebSocketForwarderJob
+ * pipeline (parse -> filter -> upsert/delete sinks), but sourced from NATS
+ * JetStream instead of Kafka. Deployed as a separate FlinkDeployment
+ * (tf2-ingest-flink-job-nats-verify) running side-by-side with the
+ * Kafka-sourced production job, both writing to the same Postgres — safe
+ * because ListingUpsertSink/ListingDeleteSink are idempotent upserts/deletes.
+ *
+ * Operator names are suffixed "Nats" (not shared with WebSocketForwarderJob's
+ * "...Kafka..." names) so this verification job's metrics don't get folded
+ * into the existing Grafana panels/alerts that key off the Kafka job's
+ * operator names during the side-by-side comparison window.
+ *
+ * Checkpointing is not enabled in this deployment (same as the Kafka job
+ * today — see the migration notes), so the NATS source acks explicitly per
+ * message via AckingUtf8StringSourceConverter rather than relying on
+ * checkpoint-gated acking, which would never fire.
+ */
 @Slf4j
-public class WebSocketForwarderJob {
+public class WebSocketForwarderNatsJob {
 
     public static void main(String[] args) throws Exception {
-        log.info("Starting BackpackTF Kafka Forwarder Job...");
+        log.info("Starting BackpackTF NATS Forwarder Job (Phase 3 verification)...");
 
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -36,28 +53,19 @@ public class WebSocketForwarderJob {
         if (dbUrl == null || dbUser == null || dbPass == null)
             throw new IllegalArgumentException("Database env vars missing");
 
-        KafkaSource<String> kafkaSource;
-        try {
-            kafkaSource = KafkaMessageSource.createSource();
-        } catch (KafkaException e) {
-            log.error("Failed to create Kafka source. Please check Kafka configuration and connectivity.", e);
-            throw new IllegalStateException("Kafka source creation failed: " + e.getMessage(), e);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid Kafka configuration. Please check environment variables.", e);
-            throw e;
-        }
+        JetStreamSource<String> natsSource = NatsListingSource.createSource();
 
-        DataStreamSource<String> source = env.fromSource(kafkaSource,
+        DataStreamSource<String> source = env.fromSource(natsSource,
                 org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(),
-                "BackpackTFKafkaSource");
+                "BackpackTFNatsSource");
 
-        var sourceWithMetrics = KafkaSourceWithMetrics.addMetrics(source)
-                .name("BackpackTFKafkaSourceWithMetrics");
+        var sourceWithMetrics = NatsSourceWithMetrics.addMetrics(source)
+                .name("BackpackTFNatsSourceWithMetrics");
 
         var parsed = sourceWithMetrics
-                .flatMap(new KafkaMessageParser())
+                .flatMap(new NatsMessageParser())
                 .returns(ListingUpdate.class)
-                .name("BackpackTFKafkaMessageParser");
+                .name("BackpackTFNatsMessageParser");
 
         parsed.map(new RichMapFunction<ListingUpdate, ListingUpdate>() {
 
@@ -76,16 +84,16 @@ public class WebSocketForwarderJob {
         });
 
         parsed.filter(lu -> lu != null && lu.getEvent() != null && lu.getEvent().equals("listing-update"))
-                .name("BackpackTFListingUpdateFilter")
+                .name("BackpackTFNatsListingUpdateFilter")
                 .addSink(new ListingUpsertSink(dbUrl, dbUser, dbPass, upsertBatchSize, upsertBatchIntervalMs))
-                .name("BackpackTFListingUpsertSink");
+                .name("BackpackTFNatsListingUpsertSink");
 
         parsed.filter(lu -> lu != null && lu.getEvent() != null && lu.getEvent().equals("listing-delete"))
-                .name("BackpackTFListingDeleteFilter")
+                .name("BackpackTFNatsListingDeleteFilter")
                 .addSink(new ListingDeleteSink(dbUrl, dbUser, dbPass, deleteBatchSize, deleteBatchIntervalMs))
-                .name("BackpackTFListingDeleteSink");
+                .name("BackpackTFNatsListingDeleteSink");
 
         log.info("Starting Flink job execution...");
-        env.execute("BackpackTF Kafka Forwarder");
+        env.execute("BackpackTF NATS Forwarder (verification)");
     }
 }

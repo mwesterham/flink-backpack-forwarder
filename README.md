@@ -6,19 +6,24 @@ A high-performance Apache Flink application that processes Team Fortress 2 tradi
 
 | Job | Entry Class | Purpose |
 |-----|-------------|---------|
-| **WebSocketForwarderJob** | `me.matthew.flink.backpacktfforward.WebSocketForwarderJob` | Real-time listing updates from Kafka |
-| **BackfillJob** | `me.matthew.flink.backpacktfforward.BackfillJob` | On-demand market data backfill |
+| **WebSocketForwarderNatsJob** | `me.matthew.flink.backpacktfforward.WebSocketForwarderNatsJob` | Real-time listing updates from NATS JetStream (production) |
+| **BackfillJob** | `me.matthew.flink.backpacktfforward.BackfillJob` | On-demand market data backfill, sourced from NATS JetStream |
 
-Both jobs are packaged into the same JAR and run as separate `FlinkDeployment` resources in Kubernetes.
+Both jobs were originally Kafka-sourced; that path (and `flink-connector-kafka`)
+has since been removed entirely — NATS JetStream is now the only source for
+both. `WebSocketForwarderNatsJob` was the "verification" job during the
+migration; it's the sole production listings job now.
+
+All jobs are packaged into the same JAR and run as separate `FlinkDeployment` resources in Kubernetes.
 
 ## Features
 
-- **Real-time Processing**: Consumes trading data from Kafka and processes listing updates
+- **Real-time Processing**: Consumes trading data from NATS JetStream and processes listing updates
 - **Backfill System**: Multiple specialized handlers for refreshing market data from BackpackTF API
 - **API Integration**: BackpackTF and Steam Web API integration with rate limiting
 - **Database Persistence**: PostgreSQL storage with upsert and delete operations
 - **Monitoring**: Comprehensive metrics via Prometheus integration
-- **Fault-tolerant**: Checkpointing — restarts resume from last checkpoint instead of replaying from a fixed timestamp
+- **At-least-once delivery**: this deployment does not actually have Flink checkpointing enabled (`execution.checkpointing.interval` is unset), so both jobs' NATS sources ack per-message via `AckingUtf8StringSourceConverter`, decoupled from Flink state/checkpoints, rather than assume a guarantee that isn't actually wired up. On a true cold start (a fresh durable consumer with no delivery history), the listings job starts from "now" rather than replaying the stream's retention window — see `NatsListingSource`/`BackfillRequestNatsSource` javadoc.
 
 ## Quick Start
 
@@ -27,7 +32,7 @@ Both jobs are packaged into the same JAR and run as separate `FlinkDeployment` r
 - Java 17+
 - Apache Flink 1.20.2
 - PostgreSQL database
-- Kafka cluster
+- NATS JetStream cluster
 
 ### Build
 
@@ -37,39 +42,49 @@ cd flink-backpack-tf-forwarder
 mvn clean package
 ```
 
-### WebSocketForwarderJob — Environment Variables
+### WebSocketForwarderNatsJob — Environment Variables
 
 ```bash
-export KAFKA_BROKERS="localhost:9092"
-export KAFKA_TOPIC="backpack-tf-relay-egress-queue-topic"
-export KAFKA_CONSUMER_GROUP="flink-backpack-tf-consumer"
+export NATS_URL="localhost:4222"
+export NATS_STREAM="LISTINGS"
+export NATS_SUBJECT="bptf.listing.update"
+export NATS_CONSUMER_NAME="flink-listings-nats-source"
 export DB_URL="jdbc:postgresql://localhost:5432/testdb"
 export DB_USERNAME="testuser"
 export DB_PASSWORD="testpass"
 ```
 
-**Optional Kafka offset control** (only applies to the very first cold start — subsequent restarts resume from the last checkpoint):
-
 | Variable | Description | Default |
 |---|---|---|
-| `KAFKA_START_TIMESTAMP` | Absolute epoch-ms to start from (takes priority) | — |
-| `KAFKA_START_TIMESTAMP_MINUTES` | Start from N minutes ago on cold start | `30` |
+| `NATS_URL` | Comma-separated NATS server addresses | Required |
+| `NATS_STREAM` | JetStream stream name | Required |
+| `NATS_SUBJECT` | Subject to consume | Required |
+| `NATS_CONSUMER_NAME` | Durable consumer name — must be one this job owns (see NatsListingSource javadoc for why it can't reuse nack's pre-existing consumers) | Required |
+| `NATS_ACK_WAIT_MS` | How long before an unacked message is redelivered | `300000` (5 min) |
 
 ```bash
-flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+flink run -d -c me.matthew.flink.backpacktfforward.WebSocketForwarderNatsJob target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
 ### BackfillJob — Environment Variables
 
 ```bash
-export BACKFILL_KAFKA_TOPIC="backpack-tf-backfill-requests-queue-topic"
-export BACKFILL_KAFKA_CONSUMER_GROUP="flink-backfill-consumer"
+export NATS_URL="localhost:4222"
+export NATS_STREAM="BACKFILL"
+export NATS_SUBJECT="bptf.backfill.request"
+export NATS_CONSUMER_NAME="flink-backfill-nats-source"
+export NATS_ACK_WAIT_MS="2100000"
 export BACKPACK_TF_API_TOKEN="your-backpack-tf-api-token"
 export STEAM_API_KEY="your-steam-api-key"
 export DB_URL="jdbc:postgresql://localhost:5432/testdb"
 export DB_USERNAME="testuser"
 export DB_PASSWORD="testpass"
 ```
+
+`NATS_ACK_WAIT_MS` defaults to 5 minutes (see `NatsSourceConfiguration`), but
+BackfillJob needs it well above its own 30-minute per-item async API-call
+timeout so a slow backpack.tf/Steam call doesn't trigger a mid-flight
+redelivery — 35 minutes (`2100000`) in the k8s deployment.
 
 **Rate limit variables** (defaults scale correctly for parallelism=1):
 
@@ -86,7 +101,7 @@ flink run -d --class me.matthew.flink.backpacktfforward.BackfillJob \
 
 ## Backfill System
 
-The backfill job processes requests from a dedicated Kafka topic one at a time (parallelism=1) so it never affects the main listing update stream. It supports four request types:
+The backfill job processes requests from a dedicated NATS subject one at a time (parallelism=1) so it never affects the main listing update stream. It supports four request types:
 
 | Type | Purpose | API Usage | Speed |
 |------|---------|-----------|-------|
@@ -122,34 +137,36 @@ docker push mwesterham/tf2-ingest-flink-job:latest
 
 The Kubernetes deployments use `spec.job.entryClass` to select which job to run from the shared JAR.
 
-## Checkpointing and Fault Tolerance
+## Fault Tolerance
 
-Both jobs checkpoint using the filesystem state backend. Checkpoint data is written to `state.checkpoints.dir` (configured in the k8s deployments as `/opt/flink/ha/checkpoints` on their respective HA PVCs).
+`execution.checkpointing.interval` is not set in either k8s deployment and `enableCheckpointing()` is never called in code, so despite `state.checkpoints.dir`/`execution.checkpointing.timeout` being configured, Flink checkpointing is not actually running — those settings are currently inert. This works out fine in practice because both jobs are stateless streaming ETL (no windows, no keyed aggregations), so there's no meaningful Flink operator state to lose on restart anyway.
 
-On restart after a failure, Flink restores from the last successful checkpoint. Without a valid checkpoint (first cold start), the main job falls back to consuming from `KAFKA_START_TIMESTAMP` or `KAFKA_START_TIMESTAMP_MINUTES` ago. The backfill job resumes from its last committed Kafka offset.
+What actually provides resilience: both jobs' NATS sources ack per message via `AckingUtf8StringSourceConverter`, decoupled from Flink state, rather than `AckBehavior.AckAll`'s checkpoint-gated acking (which would never fire here since checkpointing isn't enabled). This deliberately mirrors the old Kafka consumers' `enable.auto.commit=true` behavior, which this pipeline was originally built around before the Kafka -> NATS migration.
 
-Both k8s deployments use `upgradeMode: last-state`, so operator-managed restarts also restore from the last checkpoint.
+`upgradeMode: last-state` on both k8s deployments restores the operator-managed job graph across restarts, but — per the above — there's no real checkpoint underneath it for these jobs; it's not doing more than a stateless restart would.
 
 ## Monitoring
 
 Both jobs expose Prometheus metrics on port 9249. In the k8s cluster, each job has its own `Service` and `ServiceMonitor` resources in the `tf2-auto-bot` namespace.
 
 ```bash
-# Check processing status
-curl http://localhost:9249/metrics | grep kafka_messages_consumed
+# Check processing status (listings job)
+curl http://localhost:9249/metrics | grep nats_messages_consumed
 
 # Monitor backfill operations
 curl http://localhost:9249/metrics | grep backfill_requests
 
-# Check consumer lag
-curl http://localhost:9249/metrics | grep records_lag_max
+# Check NATS consumer backlog — from the NATS Prometheus exporter (port 7777
+# on the nats-* pods, not this job's own /metrics), since Flink's own
+# per-operator metrics don't know about JetStream consumer state
+curl http://<nats-pod>:7777/metrics | grep 'nats_consumer_num_pending{consumer_name="flink-listings-nats-source"'
 ```
 
 ## Architecture
 
 ```
-[Kafka: listing updates] → WebSocketForwarderJob → PostgreSQL
-[Kafka: backfill requests] → BackfillJob → BackpackTF API → Steam API → PostgreSQL
+[NATS: listing updates] → WebSocketForwarderNatsJob → PostgreSQL
+[NATS: backfill requests] → BackfillJob → BackpackTF API → Steam API → PostgreSQL
 ```
 
 The two jobs run as completely independent Flink deployments with separate checkpoint stores. This guarantees that slow backfill API calls (which can take 30–120 seconds per item) never block checkpoint barriers in the real-time listing update stream.

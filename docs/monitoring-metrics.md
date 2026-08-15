@@ -4,9 +4,12 @@
 
 ### Application Metrics
 
-- `kafka_messages_consumed`: Total messages consumed from Kafka
-- `kafka_messages_parsed_success`: Successfully parsed messages  
-- `kafka_messages_parsed_failed`: Failed message parsing attempts
+- `nats_messages_consumed`: Total messages consumed from NATS (listings job, `NatsMessageParser`)
+- `nats_messages_parsed_success`: Successfully parsed listing messages
+- `nats_messages_parsed_failed`: Failed listing message parsing attempts
+- `backfill_messages_consumed`: Total messages consumed from NATS (backfill job, `BackfillMessageParser`) — a separate counter from the listings job's, despite the similar name
+- `backfill_messages_parsed_success`: Successfully parsed backfill request messages
+- `backfill_messages_parsed_failed`: Failed backfill request message parsing attempts
 - `incoming_events`: Total incoming events processed
 
 ### Backfill Metrics
@@ -31,14 +34,13 @@
 - `backfill_steam_api_calls`: Steam API calls made for inventory scanning
 - `backfill_listing_id_generations`: Buy listing IDs generated
 
-### Flink's Built-in Kafka Metrics
+### NATS Consumer Backlog (from the NATS server, not this job)
 
-Flink automatically provides comprehensive Kafka consumer metrics:
+Unlike Kafka, `flink-connector-nats` doesn't expose per-consumer lag through Flink's own metrics system. Consumer backlog instead comes from the `natsio/prometheus-nats-exporter` sidecar already deployed on the `nats-*` pods (port 7777, `-jsz=all` enabled), scraped independently of this job:
 
-- `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max`: Maximum consumer lag across all partitions
-- `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_commit_sync_time_*`: Offset commit timing metrics
-- `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_coordinator_*`: Consumer group coordination metrics
-- `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_connection_*`: Connection health metrics
+- `nats_consumer_num_pending{consumer_name="..."}`: Undelivered backlog for a given durable consumer (e.g. `flink-listings-nats-source`, `flink-backfill-nats-source`) — the direct equivalent of Kafka's consumer lag
+- `nats_consumer_num_ack_pending{consumer_name="..."}`: Messages delivered but not yet acked
+- `nats_consumer_num_redelivered{consumer_name="..."}`: Redelivery count — a rising value usually means the consumer is stalled or crashing mid-processing
 
 ### Database Sink Metrics
 
@@ -56,9 +58,8 @@ Flink automatically provides comprehensive Kafka consumer metrics:
 curl http://localhost:9250/metrics
 
 # Check specific metric categories
-curl http://localhost:9250/metrics | grep kafka_messages
+curl http://localhost:9250/metrics | grep nats_messages
 curl http://localhost:9250/metrics | grep backfill
-curl http://localhost:9250/metrics | grep records_lag_max
 ```
 
 ### Backfill Monitoring
@@ -83,17 +84,18 @@ curl http://localhost:9250/metrics | grep "backfill_.*_requests"
 curl http://localhost:9250/metrics | grep backfill_steam_api
 ```
 
-### Kafka Consumer Health
+### NATS Consumer Health
 
 ```bash
-# Check consumer lag
-curl http://localhost:9250/metrics | grep records_lag_max
+# Check consumer backlog — from the NATS pod's exporter (port 7777), not
+# this job's own /metrics endpoint (port 9250/9249)
+curl http://<nats-pod>:7777/metrics | grep 'nats_consumer_num_pending{consumer_name="flink-listings-nats-source"'
 
 # Monitor message processing rates
-curl http://localhost:9250/metrics | grep kafka_messages_consumed
+curl http://localhost:9250/metrics | grep nats_messages_consumed
 
 # Check parsing success/failure rates
-curl http://localhost:9250/metrics | grep kafka_messages_parsed
+curl http://localhost:9250/metrics | grep nats_messages_parsed
 ```
 
 ### Database Performance
@@ -193,10 +195,10 @@ curl http://localhost:9250/metrics | grep backfill_api_call_latency
 # - Verify API service status
 ```
 
-**High Consumer Lag:**
+**High Consumer Backlog:**
 ```bash
-# Check Kafka consumer lag
-curl http://localhost:9250/metrics | grep records_lag_max
+# Check NATS consumer backlog (from the NATS pod's exporter, port 7777)
+curl http://<nats-pod>:7777/metrics | grep 'nats_consumer_num_pending{consumer_name="flink-listings-nats-source"'
 
 # Possible solutions:
 # - Scale up Flink parallelism
@@ -249,7 +251,7 @@ curl "https://api.steampowered.com/IEconItems_440/GetPlayerItems/v1/?key=YOUR_ST
 
 1. **Backfill Processing Failures**: `backfill_requests_failed` increasing
 2. **API Authentication Failures**: `backfill_api_calls_failed` with 401/403 errors
-3. **High Consumer Lag**: `records_lag_max` > threshold
+3. **High Consumer Backlog**: `nats_consumer_num_pending` > threshold (NATS exporter, not this job's own metrics)
 4. **Database Connection Issues**: `listing_upsert_retries` increasing rapidly
 
 ### Warning Alerts
@@ -264,12 +266,12 @@ curl "https://api.steampowered.com/IEconItems_440/GetPlayerItems/v1/?key=YOUR_ST
 **Key Metrics to Display:**
 - Backfill request processing rate and success rate
 - API call success/failure rates by endpoint
-- Consumer lag and message processing rates
+- NATS consumer backlog and message processing rates
 - Database operation success rates and latency
 - Handler usage distribution (Full vs Buy-Only vs Sell-Only vs Single-ID)
 
 **Useful Graphs:**
 - Time series of backfill requests by handler type
 - API call latency percentiles
-- Consumer lag over time
+- NATS consumer backlog over time
 - Database operation rates and retry counts
