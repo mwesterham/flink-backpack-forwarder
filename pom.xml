@@ -167,6 +167,21 @@
                                     <mainClass>me.matthew.flink.backpacktfforward.WebSocketForwarderJob</mainClass>
                                 </transformer>
                             </transformers>
+                            <filters>
+                                <!-- One of the NATS dependencies (added for Phase 3) ships a signed
+                                     jar. Shading merges its class content without updating the
+                                     signature, so the JVM refuses to load ANY class from the fat jar
+                                     with "Invalid signature file digest for Manifest main attributes"
+                                     unless the signature files themselves are excluded. -->
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>
