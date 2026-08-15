@@ -96,11 +96,30 @@
             <version>3.3.2</version>
         </dependency>
 
-        <!-- Kafka connector for Flink -->
+        <!-- Kafka connector for Flink (still used by BackfillJob and the
+             production WebSocketForwarderJob until later migration phases) -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
             <version>3.3.0-1.20</version>
+        </dependency>
+
+        <!-- NATS JetStream connector for Flink (Phase 3 of the Kafka -> NATS
+             migration) - officially supported by Synadia, released on Maven Central -->
+        <dependency>
+            <groupId>io.synadia</groupId>
+            <artifactId>flink-connector-nats</artifactId>
+            <version>3.0.4</version>
+        </dependency>
+
+        <!-- flink-connector-nats declares this as scope=runtime, but our own
+             code needs io.nats.client.Message (compile scope) to ack messages
+             in AckingUtf8StringSourceConverter. Version matches what
+             flink-connector-nats:3.0.4 itself depends on. -->
+        <dependency>
+            <groupId>io.nats</groupId>
+            <artifactId>jnats</artifactId>
+            <version>2.25.2</version>
         </dependency>
 
         <!-- Test dependencies -->

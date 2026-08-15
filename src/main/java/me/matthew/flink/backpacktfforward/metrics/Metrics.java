@@ -10,6 +10,11 @@ public final class Metrics {
     public static final String KAFKA_MESSAGES_PARSED_SUCCESS = "kafka_messages_parsed_success";
     public static final String KAFKA_MESSAGES_PARSED_FAILED = "kafka_messages_parsed_failed";
 
+    // NATS JetStream source metrics (Phase 3 of the Kafka -> NATS migration)
+    public static final String NATS_MESSAGES_CONSUMED = "nats_messages_consumed";
+    public static final String NATS_MESSAGES_PARSED_SUCCESS = "nats_messages_parsed_success";
+    public static final String NATS_MESSAGES_PARSED_FAILED = "nats_messages_parsed_failed";
+
     // Database sink metrics
     public static final String DELETED_LISTINGS = "deleted_listings";
     public static final String DELETED_LISTINGS_RETRIES = "listing_delete_retries";

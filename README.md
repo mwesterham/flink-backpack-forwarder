@@ -6,19 +6,20 @@ A high-performance Apache Flink application that processes Team Fortress 2 tradi
 
 | Job | Entry Class | Purpose |
 |-----|-------------|---------|
-| **WebSocketForwarderJob** | `me.matthew.flink.backpacktfforward.WebSocketForwarderJob` | Real-time listing updates from Kafka |
+| **WebSocketForwarderJob** | `me.matthew.flink.backpacktfforward.WebSocketForwarderJob` | Real-time listing updates from Kafka (production) |
 | **BackfillJob** | `me.matthew.flink.backpacktfforward.BackfillJob` | On-demand market data backfill |
+| **WebSocketForwarderNatsJob** | `me.matthew.flink.backpacktfforward.WebSocketForwarderNatsJob` | Same pipeline as WebSocketForwarderJob, sourced from NATS JetStream instead of Kafka — Phase 3 verification deployment for the Kafka -> NATS migration, run side-by-side with the production job, not yet a replacement for it |
 
-Both jobs are packaged into the same JAR and run as separate `FlinkDeployment` resources in Kubernetes.
+All jobs are packaged into the same JAR and run as separate `FlinkDeployment` resources in Kubernetes.
 
 ## Features
 
-- **Real-time Processing**: Consumes trading data from Kafka and processes listing updates
+- **Real-time Processing**: Consumes trading data from Kafka (or NATS JetStream — see WebSocketForwarderNatsJob) and processes listing updates
 - **Backfill System**: Multiple specialized handlers for refreshing market data from BackpackTF API
 - **API Integration**: BackpackTF and Steam Web API integration with rate limiting
 - **Database Persistence**: PostgreSQL storage with upsert and delete operations
 - **Monitoring**: Comprehensive metrics via Prometheus integration
-- **Fault-tolerant**: Checkpointing — restarts resume from last checkpoint instead of replaying from a fixed timestamp
+- **At-least-once delivery**: Kafka auto-commits offsets on a timer, decoupled from Flink state — this deployment does not actually have Flink checkpointing enabled (`execution.checkpointing.interval` is unset), so restarts replay from `KAFKA_START_TIMESTAMP_MINUTES`, not a checkpoint. WebSocketForwarderNatsJob's NATS source acks the same way: per-message, decoupled from checkpoints, to match this real behavior rather than assume a guarantee that isn't actually wired up.
 
 ## Quick Start
 
@@ -48,7 +49,7 @@ export DB_USERNAME="testuser"
 export DB_PASSWORD="testpass"
 ```
 
-**Optional Kafka offset control** (only applies to the very first cold start — subsequent restarts resume from the last checkpoint):
+**Optional Kafka offset control** (checkpointing is not actually enabled in this deployment, so this applies on every restart, not just the first cold start — see the Features section above):
 
 | Variable | Description | Default |
 |---|---|---|
@@ -57,6 +58,32 @@ export DB_PASSWORD="testpass"
 
 ```bash
 flink run -d target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
+```
+
+### WebSocketForwarderNatsJob — Environment Variables
+
+Phase 3 verification job (see `Jobs` above) — same pipeline, sourced from NATS JetStream.
+
+```bash
+export NATS_URL="localhost:4222"
+export NATS_STREAM="LISTINGS"
+export NATS_SUBJECT="bptf.listing.update"
+export NATS_CONSUMER_NAME="flink-listings-nats-verify"
+export DB_URL="jdbc:postgresql://localhost:5432/testdb"
+export DB_USERNAME="testuser"
+export DB_PASSWORD="testpass"
+```
+
+| Variable | Description | Default |
+|---|---|---|
+| `NATS_URL` | Comma-separated NATS server addresses | Required |
+| `NATS_STREAM` | JetStream stream name | Required |
+| `NATS_SUBJECT` | Subject to consume | Required |
+| `NATS_CONSUMER_NAME` | Durable consumer name — must be one this job owns (see NatsListingSource javadoc for why it can't reuse nack's pre-existing consumers) | Required |
+| `NATS_ACK_WAIT_MS` | How long before an unacked message is redelivered | `300000` (5 min) |
+
+```bash
+flink run -d -c me.matthew.flink.backpacktfforward.WebSocketForwarderNatsJob target/flink-backpack-tf-forwarder-1.0-SNAPSHOT-shaded.jar
 ```
 
 ### BackfillJob — Environment Variables
