@@ -188,6 +188,21 @@ EXECUTE FUNCTION set_updated_at_epoch_ms();
 SELECT tgname, tgenabled
 FROM pg_trigger
 WHERE tgrelid = 'listings'::regclass AND NOT tgisinternal;
+
+-- Composite index for item lookups
+-- Every pricing-path query (tf2-custom-pricer-java's ListingRepository) filters
+-- on item_defindex + item_quality_id. Without this index those queries fall
+-- back to a sequential scan of the whole table, which is what's serving reads
+-- off the TrueNAS-backed iSCSI volume — a single price lookup can otherwise
+-- pull the item's entire listing history over the wire instead of just its rows.
+-- CONCURRENTLY avoids locking the table against the live NATS-fed writers.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_listings_defindex_quality
+ON listings (item_defindex, item_quality_id);
+
+-- Verify index
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'listings';
 ```
 
 ## NATS JetStream Setup
