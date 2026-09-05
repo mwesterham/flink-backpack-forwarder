@@ -138,6 +138,7 @@ CREATE TABLE listings (
     intent TEXT NOT NULL,
     appid INT,
     metal DOUBLE PRECISION,
+    metal_half_scrap BIGINT GENERATED ALWAYS AS (ROUND(metal * 18)) STORED,
     keys BIGINT,
     raw_value DOUBLE PRECISION,
     short_value TEXT,
